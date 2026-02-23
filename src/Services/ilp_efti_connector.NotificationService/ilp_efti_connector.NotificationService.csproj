@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-ilp_efti_connectorNotificationService-8da9cc91-2157-48c2-a3f2-1ad600674f8c</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\ilp_efti_connector.Infrastructure\ilp_efti_connector.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Shared\ilp_efti_connector.Shared.Infrastructure\ilp_efti_connector.Shared.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Shared\ilp_efti_connector.Shared.Contracts\ilp_efti_connector.Shared.Contracts.csproj" />
+  </ItemGroup>
+</Project>

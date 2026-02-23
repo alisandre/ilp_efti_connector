@@ -1,0 +1,27 @@
+# Build output
+**/bin/
+**/obj/
+**/publish/
+
+# User-specific
+*.user
+.vs/
+.idea/
+*.suo
+
+# Secrets — MAI committare
+infra/docker/.env
+**/appsettings.*.json
+!**/appsettings.json
+!**/appsettings.Development.json
+*.pfx
+*.p12
+certs/
+
+# Test results
+**/TestResults/
+**/coverage/
+
+# Node / frontend
+frontend/**/node_modules/
+frontend/**/.vite/

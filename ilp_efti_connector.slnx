@@ -1,0 +1,40 @@
+<Solution>
+  <Folder Name="/docs/">
+    <File Path="docs/EFTI_Connector_Architecture_v2.md" />
+    <File Path="docs/INFRASTRUCTURE.md" />
+    <File Path="docs/SOLUTION_SETUP.md" />
+  </Folder>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Core/">
+    <Project Path="src/Core/ilp_efti_connector.Application/ilp_efti_connector.Application.csproj" />
+    <Project Path="src/Core/ilp_efti_connector.Domain/ilp_efti_connector.Domain.csproj" />
+    <Project Path="src/Core/ilp_efti_connector.Infrastructure/ilp_efti_connector.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/src/Gateway/">
+    <Project Path="src/Gateway/ilp_efti_connector.Gateway.Contracts/ilp_efti_connector.Gateway.Contracts.csproj" />
+    <Project Path="src/Gateway/ilp_efti_connector.Gateway.EftiNative/ilp_efti_connector.Gateway.EftiNative.csproj" />
+    <Project Path="src/Gateway/ilp_efti_connector.Gateway.Milos/ilp_efti_connector.Gateway.Milos.csproj" />
+  </Folder>
+  <Folder Name="/src/Services/">
+    <Project Path="src/Services/ilp_efti_connector.ApiGateway/ilp_efti_connector.ApiGateway.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.EftiGatewayService/ilp_efti_connector.EftiGatewayService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.FormInputService/ilp_efti_connector.FormInputService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.NormalizationService/ilp_efti_connector.NormalizationService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.NotificationService/ilp_efti_connector.NotificationService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.QueryProxyService/ilp_efti_connector.QueryProxyService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.ResponseHandlerService/ilp_efti_connector.ResponseHandlerService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.RetryService/ilp_efti_connector.RetryService.csproj" />
+    <Project Path="src/Services/ilp_efti_connector.ValidationService/ilp_efti_connector.ValidationService.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/ilp_efti_connector.Shared.Contracts/ilp_efti_connector.Shared.Contracts.csproj" />
+    <Project Path="src/Shared/ilp_efti_connector.Shared.Infrastructure/ilp_efti_connector.Shared.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ilp_efti_connector.Application.Tests/ilp_efti_connector.Application.Tests.csproj" />
+    <Project Path="tests/ilp_efti_connector.Domain.Tests/ilp_efti_connector.Domain.Tests.csproj" />
+    <Project Path="tests/ilp_efti_connector.Gateway.EftiNative.Tests/ilp_efti_connector.Gateway.EftiNative.Tests.csproj" />
+    <Project Path="tests/ilp_efti_connector.Gateway.Milos.Tests/ilp_efti_connector.Gateway.Milos.Tests.csproj" />
+    <Project Path="tests/ilp_efti_connector.IntegrationTests/ilp_efti_connector.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

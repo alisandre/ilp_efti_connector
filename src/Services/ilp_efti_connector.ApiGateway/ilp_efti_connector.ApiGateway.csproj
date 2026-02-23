@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Shared\ilp_efti_connector.Shared.Infrastructure\ilp_efti_connector.Shared.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Shared\ilp_efti_connector.Shared.Contracts\ilp_efti_connector.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\Core\ilp_efti_connector.Application\ilp_efti_connector.Application.csproj" />
+    <ProjectReference Include="..\..\Core\ilp_efti_connector.Infrastructure\ilp_efti_connector.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>
