@@ -8,7 +8,7 @@ using MediatR;
 namespace ilp_efti_connector.Application.TransportOperations.Commands.SubmitTransportOperation;
 
 public sealed class SubmitTransportOperationCommandHandler
-    : IRequestHandler<SubmitTransportOperationCommand, Guid>
+    : IRequestHandler<SubmitTransportOperationCommand, SubmitTransportOperationResult>
 {
     private readonly ITransportOperationRepository _operations;
     private readonly IEftiMessageRepository _messages;
@@ -24,7 +24,7 @@ public sealed class SubmitTransportOperationCommandHandler
         _uow        = uow;
     }
 
-    public async Task<Guid> Handle(SubmitTransportOperationCommand cmd, CancellationToken ct)
+    public async Task<SubmitTransportOperationResult> Handle(SubmitTransportOperationCommand cmd, CancellationToken ct)
     {
         if (await _operations.ExistsByCodeAsync(cmd.OperationCode, ct))
             throw new DuplicateOperationCodeException(cmd.OperationCode);
@@ -33,7 +33,7 @@ public sealed class SubmitTransportOperationCommandHandler
 
         var operation = new TransportOperation
         {
-            Id             = Guid.NewGuid(),
+            Id             = cmd.TransportOperationId ?? Guid.NewGuid(),
             SourceId       = cmd.SourceId,
             CustomerId     = cmd.CustomerId,
             DestinationId  = cmd.DestinationId,
@@ -172,6 +172,6 @@ public sealed class SubmitTransportOperationCommandHandler
         await _messages.AddAsync(message, ct);
         await _uow.SaveChangesAsync(ct);
 
-        return operation.Id;
+        return new SubmitTransportOperationResult(operation.Id, message.Id);
     }
 }

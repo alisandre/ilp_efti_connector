@@ -13,6 +13,8 @@ public sealed record SubmitTransportOperationCommand(
     Guid?  DestinationId,
     string OperationCode,
     string DatasetType,
+    // ID pre-assegnato dall'ApiGateway (se null viene generato nel handler)
+    Guid?  TransportOperationId,
     // Consignee
     ConsigneeData?          Consignee,
     // Carriers (preservano l'ordine)
@@ -25,7 +27,13 @@ public sealed record SubmitTransportOperationCommand(
     string? RawPayloadJson,
     // Provider gateway corrente (determina quale gateway invia)
     GatewayProvider GatewayProvider
-) : IRequest<Guid>;
+) : IRequest<SubmitTransportOperationResult>;
+
+/// <summary>Risultato del comando: IDs di operation e messaggio creati.</summary>
+public sealed record SubmitTransportOperationResult(
+    Guid TransportOperationId,
+    Guid EftiMessageId
+);
 
 public sealed record ConsigneeData(
     string  Name,

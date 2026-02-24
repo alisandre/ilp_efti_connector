@@ -1,23 +1,74 @@
-namespace ilp_efti_connectorRetryService;
+using ilp_efti_connector.Domain.Interfaces.Repositories;
+using ilp_efti_connector.Shared.Contracts.Commands;
+using MassTransit;
+using Microsoft.Extensions.DependencyInjection;
 
-public class Worker : BackgroundService
+namespace ilp_efti_connector.RetryService;
+
+/// <summary>
+/// Polling periodico dei messaggi in stato RETRY con <c>NextRetryAt &lt;= utcNow</c>.
+/// Per ogni messaggio trovato invia un <see cref="SendToGatewayCommand"/> all'EftiGatewayService.
+/// </summary>
+public sealed class Worker : BackgroundService
 {
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<Worker> _logger;
+    private readonly TimeSpan _pollInterval;
 
-    public Worker(ILogger<Worker> logger)
+    public Worker(IServiceScopeFactory scopeFactory, ILogger<Worker> logger, IConfiguration config)
     {
-        _logger = logger;
+        _scopeFactory = scopeFactory;
+        _logger       = logger;
+        _pollInterval = TimeSpan.FromSeconds(config.GetValue("RetryService:PollIntervalSeconds", 30));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("RetryService avviato (intervallo: {Interval}s).", _pollInterval.TotalSeconds);
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            if (_logger.IsEnabled(LogLevel.Information))
+            try
             {
-                _logger.LogInformation("Worker running at: {time}", DateTimeOffset.Now);
+                await ProcessPendingRetriesAsync(stoppingToken);
             }
-            await Task.Delay(1000, stoppingToken);
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Errore nel ciclo di retry.");
+            }
+
+            await Task.Delay(_pollInterval, stoppingToken);
+        }
+    }
+
+    private async Task ProcessPendingRetriesAsync(CancellationToken ct)
+    {
+        await using var scope     = _scopeFactory.CreateAsyncScope();
+        var messageRepo           = scope.ServiceProvider.GetRequiredService<IEftiMessageRepository>();
+        var sendEndpointProvider  = scope.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
+
+        var pending = await messageRepo.GetPendingForRetryAsync(DateTime.UtcNow, ct);
+        if (pending.Count == 0) return;
+
+        _logger.LogInformation("RetryService: trovati {Count} messaggi da reinviare.", pending.Count);
+
+        foreach (var msg in pending)
+        {
+            var cmd = new SendToGatewayCommand(
+                EftiMessageId:        msg.Id,
+                TransportOperationId: msg.TransportOperationId,
+                CorrelationId:        msg.CorrelationId.ToString(),
+                GatewayProvider:      msg.GatewayProvider.ToString(),
+                PayloadJson:          msg.PayloadJson,
+                DatasetType:          msg.DatasetType);
+
+            var endpoint = await sendEndpointProvider.GetSendEndpoint(
+                new Uri("queue:efti-send-requested"));
+
+            await endpoint.Send(cmd, ct);
+
+            _logger.LogDebug("RetryService: SendToGatewayCommand inviato per MessageId={Id}.", msg.Id);
         }
     }
 }
+

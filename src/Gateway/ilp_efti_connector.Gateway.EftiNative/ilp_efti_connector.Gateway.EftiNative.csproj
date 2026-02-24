@@ -1,14 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\ilp_efti_connector.Gateway.Contracts\ilp_efti_connector.Gateway.Contracts.csproj" />
-    <ProjectReference Include="..\..\Shared\ilp_efti_connector.Shared.Infrastructure\ilp_efti_connector.Shared.Infrastructure.csproj" />
-  </ItemGroup>
-
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ilp_efti_connector.Gateway.Contracts\ilp_efti_connector.Gateway.Contracts.csproj" />
+    <ProjectReference Include="..\..\Shared\ilp_efti_connector.Shared.Infrastructure\ilp_efti_connector.Shared.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Refit" />
+    <PackageReference Include="Refit.HttpClientFactory" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <!-- Soppressione vulnerabilità GHSA-3hxg-fxwm-8gf7 in Refit 7.x (XML handling non usato: solo JSON) -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-3hxg-fxwm-8gf7" />
+  </ItemGroup>
 
 </Project>
