@@ -1,6 +1,6 @@
 # EFTI Connector Platform — Documentazione Architetturale
 
-> **Versione:** 2.0 · **Data:** Febbraio 2026  
+> **Versione:** 2.2 · **Data:** Febbraio 2026  
 > Documento di riferimento architetturale per il progetto **EFTI Connector Hub**.
 
 ---
@@ -21,6 +21,7 @@
 8. [Frontend React](#8-frontend-react)
 9. [Sicurezza e Conformità Normativa](#9-sicurezza-e-conformità-normativa)
 10. [Deployment e Scalabilità](#10-deployment-e-scalabilità)
+11. [Stato di Implementazione](#11-stato-di-implementazione)
 
 ---
 
@@ -73,10 +74,11 @@ La chiave dell'architettura bifase è l'interfaccia `IEftiGateway` nel Gateway S
 // Interfaccia comune — invariata tra Fase 1 e Fase 2
 public interface IEftiGateway
 {
-    Task<EftiSendResult> SendEcmrAsync(EcmrPayload payload, CancellationToken ct);
-    Task<EftiSendResult> UpdateEcmrAsync(string ecmrId, EcmrPayload payload, CancellationToken ct);
-    Task<EftiSendResult> DeleteEcmrAsync(string ecmrId, CancellationToken ct);
-    Task<EcmrPayload>    GetEcmrAsync(string ecmrId, CancellationToken ct);
+    Task<EftiSendResult>      SendEcmrAsync(EcmrPayload payload, CancellationToken ct);
+    Task<EftiSendResult>      UpdateEcmrAsync(string ecmrId, EcmrPayload payload, CancellationToken ct);
+    Task<EftiSendResult>      DeleteEcmrAsync(string ecmrId, CancellationToken ct);
+    Task<EcmrPayload>         GetEcmrAsync(string ecmrId, CancellationToken ct);
+    Task<GatewayHealthStatus> HealthCheckAsync(CancellationToken ct = default);
 }
 
 // Fase 1: implementazione via MILOS REST API
@@ -419,6 +421,8 @@ Log di audit **immutabile** per conformità GDPR (Art. 5 Reg. EU 2020/1056). Tra
 
 **Enum `AuditEntityType`:** `Customer`, `CustomerDestination`, `Source`, `TransportOperation`, `EftiMessage`, `User`
 
+**Implementazione:** `IAuditLogRepository` (Domain) → `AuditLogRepository` (Infrastructure, EF Core 9). Endpoint esposti da `QueryProxyService`: `GET /api/query/audit-logs` (paginato, 6 filtri) e `GET /api/query/audit-logs/{id}` (dettaglio completo con old/new value JSON).
+
 ---
 
 ### 4.13 Relazioni ER
@@ -464,13 +468,13 @@ L'architettura è **identica nelle due fasi**. L'unico componente che cambia int
 
 ### 5.2 Microservizi di Output
 
-**EFTI Gateway Service** *(componente chiave della bifase)*: seleziona l'implementazione attiva tramite `IEftiGateway`. In Fase 1 chiama `POST/PUT/DELETE <server>/api/ecmr-service/ecmr` verso MILOS; in Fase 2 chiama l'EFTI Gate con OAuth2 + X.509. Resilienza Polly: retry esponenziale (3 tentativi), circuit breaker, timeout 30s. Salva `external_id` e `external_uuid` dalla risposta.
+**EFTI Gateway Service** *(componente chiave della bifase)*: seleziona l'implementazione attiva tramite `IEftiGateway` e `GatewaySelector`. In Fase 1 chiama `POST/PUT/DELETE <server>/api/ecmr-service/ecmr` verso MILOS; in Fase 2 chiama l'EFTI Gate con OAuth2 + X.509. Resilienza Polly v8: `GatewayResilienceHandler` (DelegatingHandler su tutti i client HTTP) applica `ResiliencePolicies.CreateGatewayPipeline()` — retry esponenziale (3 tentativi, jitter), circuit breaker (failureRatio=0.5, minThroughput=5, break=30s), timeout 30s. `GatewayHealthMonitor` (BackgroundService) esegue `HealthCheckAsync` su ogni gateway ogni 60s e logga HEALTHY/UNHEALTHY con tempo di risposta. Salva `external_id` e `external_uuid` dalla risposta.
 
 **Response Handler Service**: elabora le risposte del gateway. In Fase 1 elabora `ECMRResponse` (eCMRID + uuid) da MILOS; in Fase 2 elabora ACK/NACK dall'EFTI Gate. Pubblica `SourceNotificationRequired`.
 
 **Notification / Webhook Service**: notifica i moduli sorgente via webhook HTTP, SSE per UI React, Hangfire retry max 24h. Invariato nelle due fasi.
 
-**Query Proxy Service**: in Fase 1 non applicabile (MILOS gestisce le query delle autorità e i QR Code autonomamente). In Fase 2 gestisce le query delle autorità verso EFTI con cache Redis e audit GDPR obbligatorio.
+**Query Proxy Service**: espone endpoint REST per la consultazione interna del sistema — attivi in entrambe le fasi. Endpoint implementati: `GET /api/query/operations` (paginato, filtri stato/gateway/sorgente), `GET /api/query/operations/{id}` (dettaglio con timeline), `GET /api/query/audit-logs` (paginato, filtri entityType/entityId/actionType/userId/from/to), `GET /api/query/audit-logs/{id}` (dettaglio con oldValueJson/newValueJson). In Fase 2 aggiunge la gestione delle query delle autorità verso EFTI con cache Redis e audit GDPR obbligatorio per ogni accesso.
 
 **Retry & Dead Letter Service**: backoff esponenziale 1m → 5m → 15m → 1h → 6h → 24h, max 6 tentativi, poi DLQ con alert e dashboard. Invariato nelle due fasi.
 
@@ -790,6 +794,57 @@ Il pannello Admin mostra chiaramente quale provider è attivo e permette il camb
 
 ---
 
-*EFTI Connector Platform — Documentazione Architetturale v2.1 — Febbraio 2026*  
+## 11. Stato di Implementazione
+
+Stato di avanzamento al **Febbraio 2026** — Fase 1 (MILOS TFP).
+
+### 11.1 Moduli Backend Completati
+
+| Modulo | Layer | Componente | Stato |
+|---|---|---|---|
+| AuditLog | Domain | `AuditLog`, `IAuditLogRepository`, `AuditEntityType`, `AuditActionType` | ✅ Completo |
+| AuditLog | Infrastructure | `AuditLogRepository`, `AuditLogConfiguration`, registrazione `InfrastructureExtensions` | ✅ Completo |
+| AuditLog | Application | `AuditLogDto`, `GetAuditLogsQuery`, `GetAuditLogsQueryHandler` | ✅ Completo |
+| AuditLog | QueryProxyService | `AuditQueryEndpoints` (`GET /api/query/audit-logs`, `GET /api/query/audit-logs/{id}`) | ✅ Completo |
+| Gateway Resilienza | Shared.Infrastructure | `GatewayResilienceHandler` (Polly v8 `DelegatingHandler`) | ✅ Completo |
+| Gateway Resilienza | Gateway.Milos | `MilosGatewayExtensions` — handler wired prima di `MilosApiKeyHandler` | ✅ Completo |
+| Gateway Resilienza | Gateway.EftiNative | `EftiNativeGatewayExtensions` — handler wired prima di `EftiOAuth2Handler` | ✅ Completo |
+| Health Monitoring | EftiGatewayService | `GatewayHealthMonitor` (BackgroundService, 60s, `HealthCheckAsync` su MILOS e EFTI_NATIVE) | ✅ Completo |
+| Unit Test MILOS | Gateway.Milos.Tests | `MilosHashcodeCalculatorTests` (5), `EcmrPayloadToMilosMapperTests` (9), `MilosTfpGatewayTests` (7) | ✅ Completo |
+
+### 11.2 Pipeline di Elaborazione Fase 1
+
+| Step | Servizio | Evento MassTransit | Stato |
+|---|---|---|---|
+| 1 · Ingestione | `ApiGatewayService` | pubblica `TransportSubmittedEvent` | ✅ Implementato |
+| 2 · Validazione | `ValidationService` | consuma → pubblica `TransportValidatedEvent` | ✅ Implementato |
+| 3 · Normalizzazione | `NormalizationService` | consuma → pubblica `EftiSendRequestedEvent` | ✅ Implementato |
+| 4 · Invio Gateway | `EftiGatewayService` | consuma → pubblica `EftiResponseReceivedEvent` | ✅ Implementato |
+| 5 · Gestione Risposta | `ResponseHandlerService` | consuma → pubblica `SourceNotificationRequiredEvent` | ✅ Implementato |
+| 6 · Notifica | `NotificationService` | consuma → webhook HTTP + SSE | ✅ Implementato |
+| 7 · Retry / DLQ | `RetryService` | backoff esponenziale 1m→24h, max 6 tentativi | ✅ Implementato |
+
+### 11.3 Stato Test
+
+| Progetto Test | Tipo | N° Test | Stato |
+|---|---|---|---|
+| `Gateway.Milos.Tests` | Unit | 21 | ✅ Completo |
+| `Gateway.EftiNative.Tests` | Unit | — | 🔄 Placeholder |
+| `Application.Tests` | Unit | — | 🔄 Placeholder |
+| `IntegrationTests` | Integration | — | 🔄 Placeholder |
+
+### 11.4 Prossimi Passi
+
+- Implementare test di integrazione con Testcontainers (MariaDB + RabbitMQ)
+- Completare unit test per `Gateway.EftiNative` e layer `Application`
+- Implementare `EftiNativeGateway` completo (Fase 2)
+- Aggiungere audit writing automatico negli handler di dominio
+- Frontend React: integrare endpoint AuditLog nel modulo Audit Log
+
+---
+
+*EFTI Connector Platform — Documentazione Architetturale v2.2 — Febbraio 2026*  
 *Sezione 4 aggiornata per rispecchiare il modello dati implementato (12 tabelle, EF Core 9 + Pomelo + MariaDB 11.4)*  
+*Sezione 5 aggiornata: GatewayResilienceHandler (Polly v8), GatewayHealthMonitor, Query Proxy Service endpoint AuditLog*  
+*Sezione 11 aggiunta: Stato di Implementazione al Febbraio 2026*  
 *Fase 1: Integrazione MILOS TFP (Circle SpA) · Fase 2: Integrazione Diretta EFTI Gate Nazionale*

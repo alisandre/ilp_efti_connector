@@ -1,5 +1,6 @@
 using ilp_efti_connector.Gateway.Contracts;
 using ilp_efti_connector.Gateway.Milos.Client;
+using ilp_efti_connector.Shared.Infrastructure.Resilience;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -35,6 +36,7 @@ public static class MilosGatewayExtensions
                 client.BaseAddress = new Uri(opts.BaseUrl);
                 client.Timeout     = TimeSpan.FromSeconds(opts.TimeoutSeconds);
             })
+            .AddHttpMessageHandler(_ => new GatewayResilienceHandler(ResiliencePolicies.CreateGatewayPipeline()))
             .AddHttpMessageHandler<MilosApiKeyHandler>();
 
         services.AddScoped<IEftiGateway, MilosTfpGateway>();

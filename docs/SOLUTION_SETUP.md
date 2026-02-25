@@ -1,6 +1,6 @@
 # EFTI Connector Platform — Solution Setup Guide
 
-> **Versione:** 1.0 · **Data:** Febbraio 2026  
+> **Versione:** 1.1 · **Data:** Febbraio 2026
 > Guida passo-passo per creare la solution C# e tutti i progetti che la compongono.  
 > Da collocare nella root della solution: `SOLUTION_SETUP.md`
 
@@ -67,32 +67,44 @@ dotnet sln add src/Core/ilp_efti_connector.Domain/ilp_efti_connector.Domain.cspr
 ```
 ilp_efti_connector.Domain/
 ├── Entities/
+│   ├── AuditLog.cs
 │   ├── Customer.cs
 │   ├── CustomerDestination.cs
-│   ├── Source.cs
-│   ├── TransportOperation.cs
 │   ├── EftiMessage.cs
-│   └── AuditLog.cs
+│   ├── Source.cs
+│   ├── TransportCarrier.cs
+│   ├── TransportConsignee.cs
+│   ├── TransportConsignmentItem.cs
+│   ├── TransportDetail.cs
+│   ├── TransportOperation.cs
+│   ├── TransportPackage.cs
+│   └── User.cs
 ├── ValueObjects/
 │   ├── EoriCode.cs
 │   ├── CountryCode.cs
 │   ├── PostalAddress.cs
 │   └── VatNumber.cs
 ├── Enums/
+│   ├── AuditActionType.cs
+│   ├── AuditEntityType.cs
+│   ├── CargoType.cs
+│   ├── EcmrEquipmentCategory.cs
 │   ├── GatewayProvider.cs
-│   ├── EftiMessageStatus.cs
-│   ├── DatasetType.cs
-│   ├── TransportMode.cs
+│   ├── Incoterms.cs
+│   ├── MessageDirection.cs
+│   ├── MessageStatus.cs
+│   ├── PlayerType.cs
 │   ├── SourceType.cs
 │   └── TransportOperationStatus.cs
 ├── Interfaces/
 │   └── Repositories/
+│       ├── IAuditLogRepository.cs
 │       ├── ICustomerRepository.cs
 │       ├── ICustomerDestinationRepository.cs
+│       ├── IEftiMessageRepository.cs
 │       ├── ISourceRepository.cs
 │       ├── ITransportOperationRepository.cs
-│       ├── IEftiMessageRepository.cs
-│       └── IAuditLogRepository.cs
+│       └── IUnitOfWork.cs
 └── Exceptions/
     ├── DomainException.cs
     ├── CustomerNotFoundException.cs
@@ -275,6 +287,12 @@ ilp_efti_connector.Application/
 │           ├── GetTransportOperationQuery.cs
 │           └── GetTransportOperationQueryHandler.cs
 │
+├── AuditLogs/
+│   └── Queries/
+│       └── GetAuditLogs/
+│           ├── GetAuditLogsQuery.cs
+│           └── GetAuditLogsQueryHandler.cs
+│
 ├── EftiMessages/
 │   ├── Commands/
 │   │   └── RetryEftiMessage/
@@ -286,10 +304,11 @@ ilp_efti_connector.Application/
 │           └── GetEftiMessagesQueryHandler.cs
 │
 └── DTOs/
+    ├── AuditLogDto.cs
     ├── CustomerDto.cs
     ├── CustomerDestinationDto.cs
-    ├── TransportOperationDto.cs
-    └── EftiMessageDto.cs
+    ├── EftiMessageDto.cs
+    └── TransportOperationDto.cs
 ```
 
 ---
@@ -327,21 +346,22 @@ dotnet add package Microsoft.EntityFrameworkCore.Design --version 9.*
 ```
 ilp_efti_connector.Infrastructure/
 ├── Persistence/
-│   ├── IlpEftiDbContext.cs
+│   ├── EftiConnectorDbContext.cs        ← 12 DbSet, SaveChangesAsync con timestamp auto
+│   ├── UnitOfWork.cs
 │   ├── Configurations/                  ← IEntityTypeConfiguration<T> per ogni entità
+│   │   ├── AuditLogConfiguration.cs
 │   │   ├── CustomerConfiguration.cs
 │   │   ├── CustomerDestinationConfiguration.cs
-│   │   ├── SourceConfiguration.cs
-│   │   ├── TransportOperationConfiguration.cs
 │   │   ├── EftiMessageConfiguration.cs
-│   │   └── AuditLogConfiguration.cs
+│   │   ├── SourceConfiguration.cs
+│   │   └── TransportOperationConfiguration.cs
 │   ├── Repositories/
+│   │   ├── AuditLogRepository.cs
 │   │   ├── CustomerRepository.cs
 │   │   ├── CustomerDestinationRepository.cs
-│   │   ├── TransportOperationRepository.cs
-│   │   └── EftiMessageRepository.cs
-│   ├── Interceptors/
-│   │   └── AuditInterceptor.cs          ← salva audit_logs automaticamente
+│   │   ├── EftiMessageRepository.cs
+│   │   ├── SourceRepository.cs
+│   │   └── TransportOperationRepository.cs
 │   └── Migrations/                      ← generate da dotnet ef migrations add
 │
 └── DependencyInjection/
@@ -357,20 +377,19 @@ public static class InfrastructureExtensions
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddSingleton<AuditInterceptor>();
-
-        services.AddDbContext<IlpEftiDbContext>((sp, options) =>
+        services.AddDbContext<EftiConnectorDbContext>(options =>
             options.UseMySql(
                 configuration.GetConnectionString("DefaultConnection"),
                 new MariaDbServerVersion(new Version(11, 4, 0)),
-                mysql => mysql.EnableRetryOnFailure(3))
-            .AddInterceptors(sp.GetRequiredService<AuditInterceptor>()));
+                mysql => mysql.EnableRetryOnFailure(3)));
 
-        // Registra repository
+        services.AddScoped<ISourceRepository, SourceRepository>();
         services.AddScoped<ICustomerRepository, CustomerRepository>();
         services.AddScoped<ICustomerDestinationRepository, CustomerDestinationRepository>();
         services.AddScoped<ITransportOperationRepository, TransportOperationRepository>();
         services.AddScoped<IEftiMessageRepository, EftiMessageRepository>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         return services;
     }
@@ -509,7 +528,8 @@ ilp_efti_connector.Shared.Infrastructure/
 │   ├── CorrelationIdMiddleware.cs
 │   └── ExceptionHandlingMiddleware.cs
 ├── Resilience/
-│   └── ResiliencePolicies.cs         ← Retry, CircuitBreaker, Timeout Polly
+│   ├── GatewayResilienceHandler.cs   ← DelegatingHandler Polly v8 per client HTTP esterni
+│   └── ResiliencePolicies.cs         ← factory ResiliencePipeline<HttpResponseMessage>
 └── Metrics/
     └── IlpEftiMetrics.cs             ← Counter e Histogram Prometheus custom
 ```
@@ -559,8 +579,8 @@ public interface IEftiGateway
     Task<EftiSendResult> SendEcmrAsync(EcmrPayload payload, CancellationToken ct = default);
     Task<EftiSendResult> UpdateEcmrAsync(string externalId, EcmrPayload payload, CancellationToken ct = default);
     Task<EftiSendResult> DeleteEcmrAsync(string externalId, CancellationToken ct = default);
-    Task<EcmrPayload>    GetEcmrAsync(string externalId, CancellationToken ct = default);
-    Task<bool>           HealthCheckAsync(CancellationToken ct = default);
+    Task<EcmrPayload>         GetEcmrAsync(string externalId, CancellationToken ct = default);
+    Task<GatewayHealthStatus> HealthCheckAsync(CancellationToken ct = default);
 }
 ```
 
@@ -732,16 +752,20 @@ public static class MilosGatewayExtensions
 
         services.AddTransient<MilosApiKeyHandler>();
 
-        services.AddRefitClient<IMilosEcmrClient>()
+        services.AddRefitClient<IMilosEcmrClient>(new RefitSettings
+            {
+                ContentSerializer = new SystemTextJsonContentSerializer(_jsonOptions)
+            })
             .ConfigureHttpClient((sp, client) =>
             {
                 var opts = sp.GetRequiredService<IOptions<MilosGatewayOptions>>().Value;
                 client.BaseAddress = new Uri(opts.BaseUrl);
-                client.Timeout     = TimeSpan.FromSeconds(30);
+                client.Timeout     = TimeSpan.FromSeconds(opts.TimeoutSeconds);
             })
-            .AddHttpMessageHandler<MilosApiKeyHandler>()
-            .AddPolicyHandler(ResiliencePolicies.GetRetryPolicy())
-            .AddPolicyHandler(ResiliencePolicies.GetCircuitBreakerPolicy());
+            // ① Polly v8: Retry(3, exp+jitter) → CircuitBreaker(50%, break=30s) → Timeout(30s)
+            .AddHttpMessageHandler(_ => new GatewayResilienceHandler(ResiliencePolicies.CreateGatewayPipeline()))
+            // ② Inietta X-API-Key header per autenticazione MILOS
+            .AddHttpMessageHandler<MilosApiKeyHandler>();
 
         services.AddScoped<IEftiGateway, MilosTfpGateway>();
 
@@ -988,30 +1012,28 @@ dotnet add src/Services/ilp_efti_connectorEftiGatewayService/ilp_efti_connectorE
 
 ```
 ilp_efti_connectorEftiGatewayService/
-├── Program.cs                           ← switch provider MILOS/EFTI via config
+├── Program.cs                           ← registra entrambi i gateway + GatewaySelector + GatewayHealthMonitor
 ├── appsettings.json
-├── Consumers/
-│   └── EftiSendConsumer.cs             ← usa IEftiGateway — identico in Fase 1 e Fase 2
-└── Extensions/e mde
-    └── ServiceCollectionExtensions.cs
+├── GatewaySelector.cs                   ← risolve MILOS/EFTI_NATIVE per nome (Scoped, Dictionary)
+├── GatewayHealthMonitor.cs              ← BackgroundService: HealthCheckAsync ogni 60s
+└── Consumers/
+    ├── EftiSendRequestedConsumer.cs     ← consuma EftiSendRequestedEvent via GatewaySelector
+    └── SendToGatewayConsumer.cs         ← consuma SendToGatewayCommand (retry)
 ```
 
 ```csharp
-// Program.cs — selezione provider a runtime
-var provider = builder.Configuration["EftiGateway:Provider"]
-    ?? throw new InvalidOperationException("EftiGateway:Provider non configurato.");
+// Program.cs — entrambi i gateway registrati; GatewaySelector risolve per nome a runtime
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddMilosGateway(builder.Configuration);       // Fase 1
+builder.Services.AddEftiNativeGateway(builder.Configuration);  // Fase 2
+builder.Services.AddScoped<GatewaySelector>();                 // risolve "MILOS" / "EFTI_NATIVE"
+builder.Services.AddHostedService<GatewayHealthMonitor>();     // ping ogni 60 s
 
-switch (provider)
+builder.Services.AddIlpEftiMessaging(builder.Configuration, x =>
 {
-    case "Milos":
-        builder.Services.AddMilosGateway(builder.Configuration);
-        break;
-    case "EftiNative":
-        builder.Services.AddEftiNativeGateway(builder.Configuration);
-        break;
-    default:
-        throw new InvalidOperationException($"Provider non riconosciuto: {provider}");
-}
+    x.AddConsumer<EftiSendRequestedConsumer>();
+    x.AddConsumer<SendToGatewayConsumer>();
+});
 ```
 
 ---
@@ -1150,9 +1172,15 @@ dotnet add src/Services/ilp_efti_connectorQueryProxyService/ilp_efti_connectorQu
 ilp_efti_connectorQueryProxyService/
 ├── Program.cs
 ├── appsettings.json
-└── Controllers/
-    └── QueryController.cs               ← GET /api/v1/queries/{id}
-                                         ← ritorna 501 in Fase 1, attivo in Fase 2
+├── Models/
+│   └── QueryDtos.cs                     ← DTO paginati (operazioni, messaggi, audit log)
+└── Endpoints/
+    ├── OperationQueryEndpoints.cs       ← GET /api/query/operations (paginato, filtri stato/gateway/sorgente)
+    │                                      GET /api/query/operations/{id} (dettaglio + timeline)
+    ├── MessageQueryEndpoints.cs         ← GET /api/query/messages (paginato, filtri per messaggio)
+    ├── AuditQueryEndpoints.cs           ← GET /api/query/audit-logs (paginato, 6 filtri)
+    │                                      GET /api/query/audit-logs/{id} (dettaglio old/new value)
+    └── SseEndpoints.cs                  ← GET /api/query/sse/status (Server-Sent Events real-time)
 ```
 
 ---
@@ -1278,9 +1306,9 @@ dotnet add tests/ilp_efti_connector.Gateway.Milos.Tests/ilp_efti_connector.Gatew
 cd tests/ilp_efti_connector.Gateway.Milos.Tests
 dotnet add package Moq --version 4.*
 dotnet add package FluentAssertions --version 6.*
-dotnet add package WireMock.Net --version 1.*           # mock server HTTP per test Refit
-dotnet add package Microsoft.Extensions.Http --version 9.*
 ```
+
+> I test utilizzano **Moq** per mockare `IMilosEcmrClient` (Refit interface) direttamente, senza WireMock. Test implementati (21 totali): `MilosHashcodeCalculatorTests` (5), `EcmrPayloadToMilosMapperTests` (9), `MilosTfpGatewayTests` (7).
 
 ---
 
@@ -1589,7 +1617,7 @@ Dopo aver creato tutti i progetti, esegui questi comandi per verificare che tutt
 # 1. Verifica che tutti i progetti siano nell'sln
 dotnet sln list
 
-# Output atteso (18 progetti):
+# Output atteso (22 progetti):
 # src/Core/ilp_efti_connector.Domain/ilp_efti_connector.Domain.csproj
 # src/Core/ilp_efti_connector.Application/ilp_efti_connector.Application.csproj
 # src/Core/ilp_efti_connector.Infrastructure/ilp_efti_connector.Infrastructure.csproj
@@ -1654,4 +1682,5 @@ FormInputService               ✓              ✓            ✓              
 
 ---
 
-*EFTI Connector Platform — Solution Setup Guide v1.0 — Febbraio 2026*
+*EFTI Connector Platform — Solution Setup Guide v1.1 — Febbraio 2026*  
+*Aggiornato: §2.1 entità (12) + enum reali (11), §2.2 Application AuditLogs, §2.3 EftiConnectorDbContext + tutti i repository, §3.2 GatewayResilienceHandler, §4.1 IEftiGateway.HealthCheckAsync, §4.2 MilosGatewayExtensions handler chain, §5.4 GatewaySelector + GatewayHealthMonitor, §5.8 QueryProxyService Endpoints, §6.3 test inventory, §9 22 progetti*

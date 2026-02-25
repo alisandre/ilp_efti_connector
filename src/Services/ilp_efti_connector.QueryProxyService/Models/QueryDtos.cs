@@ -58,6 +58,35 @@ public sealed record PagedResult<T>(
     int              TotalPages
 );
 
+/// <summary>Voce del log di audit (lista paginata).</summary>
+public sealed record AuditLogEntryDto(
+    Guid      Id,
+    string    EntityType,
+    Guid      EntityId,
+    string    ActionType,
+    Guid?     PerformedByUserId,
+    Guid?     PerformedBySourceId,
+    string    Description,
+    string?   IpAddress,
+    DateTime  CreatedAt
+);
+
+/// <summary>Dettaglio completo di un record di audit.</summary>
+public sealed record AuditLogDetailDto(
+    Guid      Id,
+    string    EntityType,
+    Guid      EntityId,
+    string    ActionType,
+    Guid?     PerformedByUserId,
+    Guid?     PerformedBySourceId,
+    string    Description,
+    string?   OldValueJson,
+    string?   NewValueJson,
+    string?   IpAddress,
+    string?   UserAgent,
+    DateTime  CreatedAt
+);
+
 /// <summary>Payload dell'evento SSE inviato al client quando lo stato cambia.</summary>
 public sealed record OperationStatusSseEvent(
     Guid      TransportOperationId,

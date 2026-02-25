@@ -2,9 +2,12 @@
   <Folder Name="/docs/">
     <File Path="docs/EFTI_Connector_Architecture_v2.md" />
     <File Path="docs/INFRASTRUCTURE.md" />
+    <File Path="docs/MILOS TFP e-CMR - eFTI.pdf" />
     <File Path="docs/SOLUTION_SETUP.md" />
   </Folder>
-  <Folder Name="/src/" />
+  <Folder Name="/src/">
+    <File Path="avvio.txt" />
+  </Folder>
   <Folder Name="/src/Core/">
     <Project Path="src/Core/ilp_efti_connector.Application/ilp_efti_connector.Application.csproj" />
     <Project Path="src/Core/ilp_efti_connector.Domain/ilp_efti_connector.Domain.csproj" />

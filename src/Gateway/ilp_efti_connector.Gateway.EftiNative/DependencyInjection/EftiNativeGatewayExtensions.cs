@@ -2,6 +2,7 @@ using ilp_efti_connector.Gateway.Contracts;
 using ilp_efti_connector.Gateway.EftiNative.Auth;
 using ilp_efti_connector.Gateway.EftiNative.Client;
 using ilp_efti_connector.Shared.Infrastructure.Extensions;
+using ilp_efti_connector.Shared.Infrastructure.Resilience;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -53,6 +54,7 @@ public static class EftiNativeGatewayExtensions
                 client.BaseAddress = new Uri(opts.BaseUrl);
                 client.Timeout     = TimeSpan.FromSeconds(opts.TimeoutSeconds);
             })
+            .AddHttpMessageHandler(_ => new GatewayResilienceHandler(ResiliencePolicies.CreateGatewayPipeline()))
             .AddHttpMessageHandler<EftiOAuth2Handler>();
 
         services.AddScoped<IEftiGateway, EftiNativeGateway>();

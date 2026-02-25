@@ -12,10 +12,21 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Moq" />
+    <PackageReference Include="FluentAssertions" />
   </ItemGroup>
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Using Include="Moq" />
+    <Using Include="FluentAssertions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Core\ilp_efti_connector.Application\ilp_efti_connector.Application.csproj" />
+    <ProjectReference Include="..\..\src\Core\ilp_efti_connector.Domain\ilp_efti_connector.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Services\ilp_efti_connector.ValidationService\ilp_efti_connector.ValidationService.csproj" />
+    <ProjectReference Include="..\..\src\Shared\ilp_efti_connector.Shared.Contracts\ilp_efti_connector.Shared.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>

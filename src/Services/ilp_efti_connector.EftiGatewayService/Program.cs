@@ -11,6 +11,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddMilosGateway(builder.Configuration);
 builder.Services.AddEftiNativeGateway(builder.Configuration);
 builder.Services.AddScoped<GatewaySelector>();
+builder.Services.AddHostedService<GatewayHealthMonitor>();
 
 builder.Services.AddIlpEftiMessaging(builder.Configuration, x =>
 {

@@ -1,7 +1,7 @@
 # EFTI Connector Platform — Infrastructure Guide
 
-> **Versione:** 1.0 · **Data:** Febbraio 2026  
-> Guida operativa per il provisioning dell'infrastruttura locale (dev) e di produzione.  
+> **Versione:** 1.1 · **Data:** Febbraio 2026  
+> Guida operativa per il provisioning dell'infrastruttura locale (dev) e di produzione.
 > Da collocare nella root della solution: `ilp_efti_connectorsln` → `INFRASTRUCTURE.md`
 
 ---
@@ -558,32 +558,43 @@ echo "✅ Migrations completate."
 ### Configurazione EF Core + Pomelo (Shared.Infrastructure)
 
 ```csharp
-// IlpEftiDbContext.cs
-public class IlpEftiDbContext : DbContext
+// EftiConnectorDbContext.cs
+public class EftiConnectorDbContext : DbContext
 {
-    public IlpEftiDbContext(DbContextOptions<IlpEftiDbContext> options) : base(options) { }
+    public EftiConnectorDbContext(DbContextOptions<EftiConnectorDbContext> options)
+        : base(options) { }
 
-    public DbSet<Customer>             Customers             => Set<Customer>();
-    public DbSet<CustomerDestination>  CustomerDestinations  => Set<CustomerDestination>();
-    public DbSet<Source>               Sources               => Set<Source>();
-    public DbSet<TransportOperation>   TransportOperations   => Set<TransportOperation>();
-    public DbSet<EftiMessage>          EftiMessages          => Set<EftiMessage>();
-    public DbSet<AuditLog>             AuditLogs             => Set<AuditLog>();
+    public DbSet<Customer>                 Customers                  => Set<Customer>();
+    public DbSet<CustomerDestination>      CustomerDestinations       => Set<CustomerDestination>();
+    public DbSet<Source>                   Sources                    => Set<Source>();
+    public DbSet<TransportOperation>       TransportOperations        => Set<TransportOperation>();
+    public DbSet<TransportConsignee>       TransportConsignees        => Set<TransportConsignee>();
+    public DbSet<TransportCarrier>         TransportCarriers          => Set<TransportCarrier>();
+    public DbSet<TransportDetail>          TransportDetails           => Set<TransportDetail>();
+    public DbSet<TransportConsignmentItem> TransportConsignmentItems  => Set<TransportConsignmentItem>();
+    public DbSet<TransportPackage>         TransportPackages          => Set<TransportPackage>();
+    public DbSet<EftiMessage>              EftiMessages               => Set<EftiMessage>();
+    public DbSet<User>                     Users                      => Set<User>();
+    public DbSet<AuditLog>                 AuditLogs                  => Set<AuditLog>();
 }
 
-// InfrastructureExtensions.cs
-public static IServiceCollection AddIlpEftiDatabase(
+// InfrastructureExtensions.cs — registra DbContext + tutti i repository
+public static IServiceCollection AddInfrastructure(
     this IServiceCollection services, IConfiguration configuration)
 {
-    services.AddDbContext<IlpEftiDbContext>(options =>
+    services.AddDbContext<EftiConnectorDbContext>(options =>
         options.UseMySql(
             configuration.GetConnectionString("DefaultConnection"),
             new MariaDbServerVersion(new Version(11, 4, 0)),
-            mysqlOptions =>
-            {
-                mysqlOptions.EnableRetryOnFailure(maxRetryCount: 3);
-                mysqlOptions.CommandTimeout(30);
-            }));
+            mysql => mysql.EnableRetryOnFailure(3)));
+
+    services.AddScoped<ISourceRepository, SourceRepository>();
+    services.AddScoped<ICustomerRepository, CustomerRepository>();
+    services.AddScoped<ICustomerDestinationRepository, CustomerDestinationRepository>();
+    services.AddScoped<ITransportOperationRepository, TransportOperationRepository>();
+    services.AddScoped<IEftiMessageRepository, EftiMessageRepository>();
+    services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+    services.AddScoped<IUnitOfWork, UnitOfWork>();
     return services;
 }
 ```
@@ -961,21 +972,27 @@ public class IlpEftiMetrics
 
 ```csharp
 // EftiGatewayService/Program.cs
-var provider = builder.Configuration["EftiGateway:Provider"]
-    ?? throw new InvalidOperationException("EftiGateway:Provider non configurato.");
+// Entrambi i gateway vengono registrati; GatewaySelector risolve a runtime
+// il provider attivo leggendo EftiGateway:Provider da appsettings/env.
+var builder = Host.CreateApplicationBuilder(args);
 
-switch (provider)
+builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddMilosGateway(builder.Configuration);       // Fase 1
+builder.Services.AddEftiNativeGateway(builder.Configuration);  // Fase 2
+builder.Services.AddScoped<GatewaySelector>();                 // risolve per nome
+builder.Services.AddHostedService<GatewayHealthMonitor>();     // ping ogni 60 s
+
+builder.Services.AddIlpEftiMessaging(builder.Configuration, x =>
 {
-    case "Milos":
-        builder.Services.AddMilosGateway(builder.Configuration);
-        break;
-    case "EftiNative":
-        builder.Services.AddEftiNativeGateway(builder.Configuration);
-        break;
-    default:
-        throw new InvalidOperationException($"Provider non riconosciuto: {provider}");
-}
+    x.AddConsumer<EftiSendRequestedConsumer>();
+    x.AddConsumer<SendToGatewayConsumer>();
+});
+
+var host = builder.Build();
+host.Run();
 ```
+
+> Il `GatewaySelector` (Scoped) espone `Get("MILOS")` / `Get("EFTI_NATIVE")`. Il consumer legge il provider attivo da `EftiGateway:Provider` e delega la chiamata all'implementazione corretta tramite `IEftiGateway`.
 
 ### Fase 1 — Mock MILOS per sviluppo locale
 
@@ -1025,9 +1042,10 @@ La directory `infra/docker/milos-mock/mappings/` contiene le stub WireMock per s
 public static IServiceCollection AddEftiNativeGateway(
     this IServiceCollection services, IConfiguration configuration)
 {
-    services.Configure<EftiNativeOptions>(
-        configuration.GetSection("EftiGateway:EftiNative"));
+    services.Configure<EftiNativeOptions>(configuration.GetSection("EftiGateway:EftiNative"));
 
+    services.AddIlpEftiRedis(configuration);       // token cache Redis (TTL 1h)
+    services.AddSingleton<EftiTokenCache>();
     services.AddTransient<EftiOAuth2Handler>();
 
     services.AddRefitClient<IEftiGateClient>()
@@ -1035,44 +1053,69 @@ public static IServiceCollection AddEftiNativeGateway(
         {
             var opts = sp.GetRequiredService<IOptions<EftiNativeOptions>>().Value;
             c.BaseAddress = new Uri(opts.BaseUrl);
+            c.Timeout     = TimeSpan.FromSeconds(opts.TimeoutSeconds);
         })
-        .AddHttpMessageHandler<EftiOAuth2Handler>()
-        .AddPolicyHandler(ResiliencePolicies.GetRetryPolicy())
-        .AddPolicyHandler(ResiliencePolicies.GetCircuitBreakerPolicy());
+        // ① Polly v8: Retry(3, exp+jitter) → CircuitBreaker(50%, break=30s) → Timeout(30s)
+        .AddHttpMessageHandler(_ => new GatewayResilienceHandler(ResiliencePolicies.CreateGatewayPipeline()))
+        // ② OAuth2 Bearer token da cache Redis
+        .AddHttpMessageHandler<EftiOAuth2Handler>();
 
     services.AddScoped<IEftiGateway, EftiNativeGateway>();
     return services;
 }
 ```
 
-### Polly — Resilience Policies condivise
+### Polly v8 — GatewayResilienceHandler + ResiliencePolicies
 
 ```csharp
-// ResiliencePolicies.cs (in Shared.Infrastructure)
+// Shared.Infrastructure/Resilience/GatewayResilienceHandler.cs
+// DelegatingHandler che avvolge ogni chiamata HTTP in uscita nel pipeline Polly v8.
+public sealed class GatewayResilienceHandler : DelegatingHandler
+{
+    private readonly ResiliencePipeline<HttpResponseMessage> _pipeline;
+
+    public GatewayResilienceHandler(ResiliencePipeline<HttpResponseMessage> pipeline)
+        => _pipeline = pipeline;
+
+    protected override async Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request, CancellationToken ct)
+        => await _pipeline.ExecuteAsync(
+            async token => await base.SendAsync(request, token), ct);
+}
+
+// Shared.Infrastructure/Resilience/ResiliencePolicies.cs
 public static class ResiliencePolicies
 {
-    public static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy() =>
-        HttpPolicyExtensions
-            .HandleTransientHttpError()
-            .WaitAndRetryAsync(3, retryAttempt =>
-                TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
-                onRetry: (outcome, delay, attempt, _) =>
-                    Log.Warning("Retry {Attempt} verso gateway, delay {Delay}ms. Errore: {Error}",
-                        attempt, delay.TotalMilliseconds, outcome.Exception?.Message));
-
-    public static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy() =>
-        HttpPolicyExtensions
-            .HandleTransientHttpError()
-            .CircuitBreakerAsync(
-                handledEventsAllowedBeforeBreaking: 5,
-                durationOfBreak: TimeSpan.FromSeconds(30),
-                onBreak:  (_, _) => Log.Error("Circuit breaker APERTO verso gateway EFTI"),
-                onReset:  ()     => Log.Information("Circuit breaker CHIUSO — gateway raggiungibile"));
-
-    public static IAsyncPolicy<HttpResponseMessage> GetTimeoutPolicy() =>
-        Policy.TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(30));
+    /// <summary>Pipeline gateway: Retry(3, exp+jitter) → CircuitBreaker(50%, break=30s) → Timeout(30s).</summary>
+    public static ResiliencePipeline<HttpResponseMessage> CreateGatewayPipeline(
+        int retryCount = 3, int circuitBreakSeconds = 30, int timeoutSeconds = 30) =>
+        new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+            {
+                MaxRetryAttempts = retryCount,
+                BackoffType      = DelayBackoffType.Exponential,
+                Delay            = TimeSpan.FromSeconds(1),
+                UseJitter        = true,
+                ShouldHandle     = new PredicateBuilder<HttpResponseMessage>()
+                    .Handle<HttpRequestException>()
+                    .HandleResult(r => (int)r.StatusCode >= 500)
+            })
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions<HttpResponseMessage>
+            {
+                FailureRatio      = 0.5,
+                SamplingDuration  = TimeSpan.FromSeconds(circuitBreakSeconds),
+                MinimumThroughput = 5,
+                BreakDuration     = TimeSpan.FromSeconds(circuitBreakSeconds),
+                ShouldHandle      = new PredicateBuilder<HttpResponseMessage>()
+                    .Handle<HttpRequestException>()
+                    .HandleResult(r => (int)r.StatusCode >= 500)
+            })
+            .AddTimeout(TimeSpan.FromSeconds(timeoutSeconds))
+            .Build();
 }
 ```
+
+> Il `GatewayResilienceHandler` viene registrato con una factory lambda (`.AddHttpMessageHandler(_ => new GatewayResilienceHandler(ResiliencePolicies.CreateGatewayPipeline()))`) **prima** dell'handler di autenticazione (`MilosApiKeyHandler` / `EftiOAuth2Handler`) sia in `MilosGatewayExtensions` che in `EftiNativeGatewayExtensions`.
 
 ---
 
@@ -1473,6 +1516,21 @@ app.MapHealthChecks("/health/ready", new() { Predicate = hc => hc.Tags.Contains(
 app.MapHealthChecks("/health",       new() { ResponseWriter = UIResponseWriter.WriteHealthCheckUIResponse });
 ```
 
+### GatewayHealthMonitor (solo EftiGatewayService)
+
+`GatewayHealthMonitor` è un `BackgroundService` registrato unicamente in `EftiGatewayService`. Ogni **60 secondi** chiama `HealthCheckAsync()` su tutti i provider registrati (`MILOS`, `EFTI_NATIVE`) tramite `GatewaySelector` e logga il risultato:
+
+```csharp
+// Registrazione in EftiGatewayService/Program.cs
+builder.Services.AddHostedService<GatewayHealthMonitor>();
+
+// Output log (Serilog/Seq)
+// [INF] Gateway MILOS       — HEALTHY  (42 ms)
+// [WRN] Gateway EFTI_NATIVE — UNHEALTHY: Connection refused
+```
+
+I log sono consultabili in Seq con filtro `Source = "GatewayHealthMonitor"` e integrabili in Grafana tramite il Loki datasource.
+
 ---
 
 ## 17. Runbook Operativo
@@ -1550,4 +1608,5 @@ openssl x509 -in certs/efti-client.crt -noout -dates
 
 ---
 
-*EFTI Connector Platform — Infrastructure Guide v1.0 — Febbraio 2026*
+*EFTI Connector Platform — Infrastructure Guide v1.1 — Febbario 2026*  
+*Aggiornato: §5 `EftiConnectorDbContext` (12 DbSet, `AddInfrastructure` con tutti i repository), §12 `GatewayResilienceHandler` Polly v8 + `GatewaySelector`, §16 `GatewayHealthMonitor` BackgroundService*

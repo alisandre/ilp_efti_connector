@@ -1,0 +1,11 @@
+# 1. Avvia l'infrastruttura Docker (dalla root della solution)
+docker compose up -d
+
+# 2. Attendi che i container siano healthy (~15s)
+docker compose ps
+
+# 3. Applica le migration EF Core (prima volta o dopo nuove migration)
+dotnet ef database update --project src\Core\ilp_efti_connector.Infrastructure `
+                          --startup-project src\Services\ilp_efti_connector.ApiGateway
+
+# 4. Avvia il progetto

@@ -24,6 +24,7 @@ public static class InfrastructureExtensions
         services.AddScoped<ICustomerDestinationRepository, CustomerDestinationRepository>();
         services.AddScoped<ITransportOperationRepository, TransportOperationRepository>();
         services.AddScoped<IEftiMessageRepository, EftiMessageRepository>();
+        services.AddScoped<IAuditLogRepository, AuditLogRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         return services;
