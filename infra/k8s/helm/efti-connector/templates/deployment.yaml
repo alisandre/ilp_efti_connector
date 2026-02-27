@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: efti-connector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: efti-connector
+  template:
+    metadata:
+      labels:
+        app: efti-connector
+    spec:
+      containers:
+        - name: efti-connector
+          image: efti-connector:latest
+          ports:
+            - containerPort: 80

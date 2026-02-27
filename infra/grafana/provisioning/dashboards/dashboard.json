@@ -1,0 +1,8 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "EFTI Connector",
+    "panels": []
+  },
+  "overwrite": true
+}

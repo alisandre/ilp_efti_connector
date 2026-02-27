@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: efti-connector-config
+  labels:
+    app: efti-connector
+  namespace: default
+data:
+  appsettings.json: |
+    {
+      "ConnectionStrings": {
+        "DefaultConnection": "Server=db;Database=efti_connector;User=root;Password=root;"
+      }
+    }
