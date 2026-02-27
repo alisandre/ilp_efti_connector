@@ -27,8 +27,7 @@ public record ConsignorInfo(
     string      Name,
     string?     VatNumber,
     string?     EoriCode,
-    AddressInfo Address
-);
+    AddressInfo Address);
 
 /// <summary>Destinatario / consignee dell'operazione di trasporto.</summary>
 public record ConsigneeInfo(

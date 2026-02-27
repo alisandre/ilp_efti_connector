@@ -1,6 +1,0 @@
-@ilp_efti_connectorApiGateway_HostAddress = http://localhost:5052
-
-GET {{ilp_efti_connectorApiGateway_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###

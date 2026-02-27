@@ -7,13 +7,18 @@ using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Scalar.AspNetCore;
 using System.Text.Json;
+using ilp_efti_connector.Domain.Entities;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Registrazione servizi infrastrutturali e autenticazione
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddIlpEftiAuth(builder.Configuration);
 builder.Services.AddIlpEftiMessaging(builder.Configuration);
 builder.Services.AddOpenApi();
+
+// Abilita i controller MVC
+builder.Services.AddControllers();
 
 var app = builder.Build();
 
@@ -26,63 +31,7 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-// ─── POST /api/transport-operations ──────────────────────────────────────────
-app.MapPost("/api/transport-operations", async (
-    [FromBody] SourcePayloadDto payload,
-    [FromHeader(Name = "X-Source-Id")] Guid sourceId,
-    IPublishEndpoint publish,
-    CancellationToken ct) =>
-{
-    var operationId   = Guid.NewGuid();
-    var correlationId = Guid.NewGuid().ToString();
-
-    await publish.Publish(new TransportSubmittedEvent(
-        TransportOperationId: operationId,
-        SourceId:             sourceId,
-        CorrelationId:        correlationId,
-        RawPayloadJson:       JsonSerializer.Serialize(payload),
-        DatasetType:          payload.DatasetType,
-        SubmittedAt:          DateTime.UtcNow), ct);
-
-    return Results.Accepted($"/api/transport-operations/{operationId}/status",
-        new { transportOperationId = operationId, correlationId });
-})
-.WithName("SubmitTransportOperation")
-.WithTags("TransportOperations")
-.RequireAuthorization();
-
-// ─── GET /api/transport-operations/{id}/status ───────────────────────────────
-app.MapGet("/api/transport-operations/{id:guid}/status", async (
-    Guid id,
-    IEftiMessageRepository messages,
-    ITransportOperationRepository operations,
-    CancellationToken ct) =>
-{
-    var operation = await operations.GetByIdAsync(id, ct);
-    if (operation is null)
-        return Results.NotFound(new { error = $"Operazione {id} non trovata." });
-
-    var msgList = await messages.GetByTransportOperationIdAsync(id, ct);
-    var latest  = msgList.OrderByDescending(m => m.CreatedAt).FirstOrDefault();
-
-    return Results.Ok(new
-    {
-        transportOperationId = id,
-        operationCode        = operation.OperationCode,
-        status               = latest?.Status.ToString() ?? operation.Status.ToString(),
-        gatewayProvider      = latest?.GatewayProvider.ToString(),
-        externalId           = latest?.ExternalId,
-        retryCount           = latest?.RetryCount ?? 0,
-        sentAt               = latest?.SentAt,
-        acknowledgedAt       = latest?.AcknowledgedAt,
-        updatedAt            = operation.UpdatedAt
-    });
-})
-.WithName("GetTransportOperationStatus")
-.WithTags("TransportOperations")
-.RequireAuthorization();
-
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", service = "ApiGateway" }))
-   .AllowAnonymous();
+// Mappa i controller MVC
+app.MapControllers();
 
 app.Run();
