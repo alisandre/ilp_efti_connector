@@ -13,6 +13,8 @@
 - [3. Stack Tecnologico](#3-stack-tecnologico)
 - [4. Diagramma del Database](#4-diagramma-del-database)
 - [5. Architettura a Microservizi](#5-architettura-a-microservizi)
+  - [5.1 Macro-Flusso dei Componenti](#51-macro-flusso-dei-componenti)
+  - [5.2 Ciclo di Vita degli Stati — TransportOperation](#52-ciclo-di-vita-degli-stati--transportoperation)
 - [6. Fase 1 — Integrazione con MILOS TFP](#6-fase-1--integrazione-con-milos-tfp)
 - [7. Fase 2 — Integrazione Diretta con EFTI](#7-fase-2--integrazione-diretta-con-efti)
 - [8. Frontend React](#8-frontend-react)
@@ -20,18 +22,17 @@
 - [10. Deployment e Scalabilità](#10-deployment-e-scalabilità)
 - [11. Stato di Implementazione](#11-stato-di-implementazione)
 
-*(Argomenti previsti per le Guide di Sviluppo e Operative)*
-- [12. Guida all'Ambiente di Sviluppo](#12-guida-all-ambiente-di-sviluppo)
-  - [Prerequisiti e Configurazione Locale (Docker Compose)](#prerequisiti-e-configurazione-locale)
-  - [Creazione e Struttura della Solution](#creazione-e-struttura-della-solution)
-  - [Configurazione dei Servizi (Database, Broker, Identity Provider, Gateways)](#configurazione-servizi)
-  - [Progetti di Test e Verifica](#progetti-di-test-e-verifica)
+- [12. Guida all'Ambiente di Sviluppo](#12-guida-allambiente-di-sviluppo)
+  - [12.1 Prerequisiti e Configurazione Locale (Docker Compose)](#121-prerequisiti-e-configurazione-locale)
+  - [12.2 Struttura della Solution](#122-struttura-della-solution)
+  - [12.3 Configurazione dei Servizi](#123-configurazione-dei-servizi)
+  - [12.4 Progetti di Test e Verifica](#124-progetti-di-test-e-verifica)
 - [13. Operations e CI/CD](#13-operations-e-cicd)
-  - [CI/CD Pipeline](#cicd-pipeline)
-  - [Produzione e Orchestrazione (Kubernetes)](#produzione-e-orchestrazione)
-  - [Secrets Management e Security](#secrets-management)
-  - [Monitoring, Health Checks e Logging (Prometheus, Grafana, Serilog)](#monitoring-health-checks-e-logging)
-  - [Runbook Operativo](#runbook-operativo)
+  - [13.1 CI/CD Pipeline](#131-cicd-pipeline)
+  - [13.2 Produzione e Orchestrazione (Kubernetes)](#132-produzione-e-orchestrazione-kubernetes)
+  - [13.3 Secrets Management e Security](#133-secrets-management-e-security)
+  - [13.4 Monitoring, Health Checks e Logging](#134-monitoring-health-checks-e-logging)
+  - [13.5 Runbook Operativo](#135-runbook-operativo)
 
 ---
 
@@ -299,13 +300,70 @@ Il backend è segmentato internamente usando il pattern In-Memory Publisher/Subs
 2. **Validation Service**: Pesca il body e ne applica validazioni formali.
    - Fase 1: Verifica presenza chiavi minime per i provider di mercato (MILOS chiede almeno P.IVA valida, Targa, Nazione ISO).
    - Fase 2: Check formale *EN 17532* (struttura xml/json e id semanticamente stretti). Pubblica `TransportValidated` o genera eccezione notificata in dashboard.
-3. **Normalization & Mapping Service**: Cuore della logica transazionale interna. Applica la logica di *Upsert* esposta nella Sezione 4 sulle anagrafiche e genera le insert EF Core nel DB. Riformatta poi la stringa trasformandola da lingua universale a JSON proprietario di MILOS e apre la pratica in stato di `DRAFT / SENDING`.
+3. **Normalization & Mapping Service**: Cuore della logica transazionale interna. Applica la logica di *Upsert* esposta nella Sezione 4 sulle anagrafiche e genera le insert EF Core nel DB. Riformatta poi la stringa trasformandola da lingua universale a JSON proprietario di MILOS e apre la pratica in stato `VALIDATED` (pronta per l'invio).
 4. **EFTI Gateway Service *(Componente Bifasico Core)***: 
    - Iniettato tramite `GatewaySelector` a runtime.
    - Si serve di circuit breaker (`Polly v8 GatewayResilienceHandler`).
    - Se il provider non risponde (es. MILOS in manutenzione programmata), ingabbia le eccezioni, mette il messaggio in status transitorio e demanda il problema a Hangfire per retry.
 5. **Response Handler e Webhook Notification Service**: Al check di ritorno OK dal provider. Esegue query su anagrafiche webhook e spara post HTTP all'indietro per svegliare e notificare in automatico gli ERP (così che i terminalisti possano far partire i camion col QR generato). In contemporanea, aggiorna in SSE (Server-Sent-Events) le UI React affinché i cruscotti diventino verdi real-time.
 6. **Query Proxy e Audit Service**: Endpoints per lettura read-only (es `GET /query/operations?page=3`). È l'unico punto che interagisce pesantemente con Redis cache per non uccidere il DB e appende **obbligatoriamente** righe sull'Audit GDPR per tracciare chi (quale autorità stradale e umana) ha sbirciato la lettera di vettura.
+
+---
+
+### 5.2 Ciclo di Vita degli Stati — `TransportOperation`
+
+Ogni `TransportOperation` percorre una macchina a stati precisa. Gli stati sono definiti nell'enum `TransportOperationStatus` (dominio) e persistiti nella colonna `status` della tabella `transport_operations`.
+
+#### Tabella stati
+
+| Stato | Valore DB | Servizio responsabile | Evento/trigger | Note |
+|---|---|---|---|---|
+| *(concettuale)* | — | — | Payload ricevuto dall'API, **non ancora in DB** | Il record non esiste ancora: l'operazione è in attesa di validazione sulla coda RabbitMQ |
+| `VALIDATED` | `VALIDATED` | `NormalizationService` via `SubmitTransportOperationCommandHandler` | Consumo `TransportValidatedEvent` | **Primo stato persistito in DB.** Viene creato solo dopo che `ValidationService` ha già verificato il payload |
+| `SENDING` | `SENDING` | `EftiGatewayService` (`EftiSendRequestedConsumer`) | Prima della chiamata HTTP verso MILOS / EFTI Gate | Stato transitorio che segnala che l'invio è in corso; utile per evitare doppi invii in caso di crash |
+| `SENT` | `SENT` | `ResponseHandlerService` (`EftiResponseReceivedConsumer`) | `EftiResponseReceivedEvent` con `IsSuccess = true` | Il gateway ha accettato la richiesta. `EftiMessage.external_id` è valorizzato |
+| `ERROR` | `ERROR` | `ResponseHandlerService` | `EftiResponseReceivedEvent` con `IsSuccess = false` dopo esaurimento retry | Numero massimo di tentativi (default 3) superato. Il messaggio passa in `DEAD` su `EftiMessage` |
+| `ACKNOWLEDGED` | `ACKNOWLEDGED` | *(futuro — Fase 2)* | Conferma asincrona dal nodo EFTI Gate di stato | Riservato per Fase 2: il gate governativo conferma la ricezione definitiva del documento |
+| `DRAFT` | `DRAFT` | *(futuro — form UI)* | Salvataggio parziale manuale dall'operatore | Riservato per bozze salvate dall'interfaccia form prima dell'invio definitivo |
+| `CANCELLED` | `CANCELLED` | *(futuro — API admin)* | Richiesta esplicita di annullamento | Operazione annullata prima del completamento; corrisponde a `DELETE /ecmr/{id}` su MILOS |
+
+> **⚠️ Nota:** Lo stato `PENDING_VALIDATION` è definito nell'enum ma **non viene mai persistito** nel flusso attuale. È uno stato concettuale che descrive la finestra di tempo tra la pubblicazione dell'evento su RabbitMQ e la creazione del record DB da parte del `NormalizationService`. Il primo stato scritto su DB è sempre `VALIDATED`.
+
+#### Diagramma delle transizioni
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING_VALIDATION : POST /api/forms/transport-operations\n(solo in-flight, non persistito)
+
+    PENDING_VALIDATION --> VALIDATED : NormalizationService\ncrea record DB
+    PENDING_VALIDATION --> [*] : ValidationService rifiuta\n(TransportValidationFailedEvent)
+
+    VALIDATED --> SENDING : EftiGatewayService\npre-invio gateway
+
+    SENDING --> SENT : ResponseHandlerService\n(IsSuccess=true)
+    SENDING --> ERROR : ResponseHandlerService\n(retry esauriti)
+
+    SENT --> ACKNOWLEDGED : [Fase 2] ACK da EFTI Gate
+
+    VALIDATED --> CANCELLED : [futuro] annullamento manuale
+    SENT --> CANCELLED : [futuro] revoca post-invio
+
+    ERROR --> [*] : messaggio in DLQ
+    ACKNOWLEDGED --> [*] : ciclo completato
+    CANCELLED --> [*]
+```
+
+#### Transizioni sullo stato di `EftiMessage`
+
+Ogni `TransportOperation` genera almeno un `EftiMessage` che tiene traccia dei *tentativi fisici* di comunicazione. I due stati sono ortogonali ma correlati.
+
+| `EftiMessage.status` | Chi lo imposta | Quando |
+|---|---|---|
+| `PENDING` | `NormalizationService` (creazione) | Record creato insieme alla `TransportOperation` |
+| `SENT` | `EftiGatewayService` + `ResponseHandlerService` | Dopo la chiamata HTTP riuscita al gateway |
+| `ERROR` | `EftiGatewayService` | Deserializzazione payload fallita |
+| `RETRY` | `ResponseHandlerService` | Risposta negativa, `retry_count < MAX_RETRY` (default 3) |
+| `DEAD` | `ResponseHandlerService` | `retry_count >= MAX_RETRY` — messaggio finisce in DLQ |
 
 ---
 
@@ -545,7 +603,14 @@ Stato di avanzamento al **Febbraio 2026** — Fase 1 (MILOS TFP).
 | Gateway Resilienza | Gateway.Milos | `MilosGatewayExtensions` — handler wired prima di `MilosApiKeyHandler` | ✅ Completo |
 | Gateway Resilienza | Gateway.EftiNative | `EftiNativeGatewayExtensions` — handler wired prima di `EftiOAuth2Handler` | ✅ Completo |
 | Health Monitoring | EftiGatewayService | `GatewayHealthMonitor` (BackgroundService, 60s, `HealthCheckAsync` su MILOS e EFTI_NATIVE) | ✅ Completo |
-| Unit Test MILOS | Gateway.Milos.Tests | `MilosHashcodeCalculatorTests` (5), `EcmrPayloadToMilosMapperTests` (9), `MilosTfpGatewayTests` (7) | ✅ Completo |
+| Unit Test MILOS | Gateway.Milos.Tests | `MilosHashcodeCalculatorTests` (5), `EcmrPayloadToMilosMapperTests` (10), `MilosTfpGatewayTests` (7) | ✅ Completo |
+| Audit Writing Automatico | Application.Common | `IAuditableCommand`, `IAuditableCommandWithEntityId`, `IAuditableResult` | ✅ Completo |
+| Audit Writing Automatico | Application.Common.Behaviours | `AuditBehaviour<TRequest,TResponse>` (MediatR pipeline) | ✅ Completo |
+| Audit Writing Automatico | Application.Common.Identity | `NullCurrentUserService` (worker services) | ✅ Completo |
+| Audit Writing Automatico | Application.DependencyInjection | `ApplicationExtensions.AddApplicationServices()` | ✅ Completo |
+| Audit Writing Automatico | Shared.Infrastructure.Identity | `HttpContextCurrentUserService` (web services via JWT) | ✅ Completo |
+| Audit Writing Automatico | Application — Comandi | `UpsertCustomerCommand`, `UpdateCustomerCommand`, `SubmitTransportOperationCommand` marcati `IAuditableCommand` | ✅ Completo |
+| Integration Tests | IntegrationTests | `MariaDbContainerFixture` (Testcontainers.MariaDb), `RepositoryTests` (6), `TransportSubmittedConsumerTests` (6), `FullPipelineTests` (4) | ✅ Completo |
 
 ### 11.2 Pipeline di Elaborazione Fase 1
 
@@ -563,23 +628,823 @@ Stato di avanzamento al **Febbraio 2026** — Fase 1 (MILOS TFP).
 
 | Progetto Test | Tipo | N° Test | Stato |
 |---|---|---|---|
-| `Gateway.Milos.Tests` | Unit | 21 | ✅ Completo |
-| `Gateway.EftiNative.Tests` | Unit | — | 🔄 Placeholder |
-| `Application.Tests` | Unit | — | 🔄 Placeholder |
-| `IntegrationTests` | Integration | — | 🔄 Placeholder |
+| `Gateway.Milos.Tests` | Unit | 22 | ✅ Completo |
+| `Gateway.EftiNative.Tests` | Unit | 23 | ✅ Completo |
+| `Application.Tests` | Unit | 23 | ✅ Completo |
+| `IntegrationTests` | Integration | 16 | ✅ Completo |
 
 ### 11.4 Prossimi Passi
 
-- Implementare test di integrazione con Testcontainers (MariaDB + RabbitMQ)
-- Completare unit test per `Gateway.EftiNative` e layer `Application`
 - Implementare `EftiNativeGateway` completo (Fase 2)
-- Aggiungere audit writing automatico negli handler di dominio
 - Frontend React: integrare endpoint AuditLog nel modulo Audit Log
 
 ---
 
+## 12. Guida all'Ambiente di Sviluppo
+
+Questa sezione descrive come configurare e avviare l'intero stack di sviluppo locale, comprendente tutti i microservizi .NET, i servizi infrastrutturali containerizzati e il frontend React.
+
+---
+
+### <a name="prerequisiti-e-configurazione-locale"></a>12.1 Prerequisiti e Configurazione Locale
+
+Prima di avviare l'ambiente di sviluppo, assicurarsi che le seguenti dipendenze siano installate e attive sulla macchina locale.
+
+| Strumento | Versione minima | Scopo |
+|---|---|---|
+| **.NET SDK** | 9.0 | Compilazione e avvio dei microservizi backend |
+| **dotnet-ef** | 9+ | Esecuzione delle EF Core Migrations (tool indipendente dal runtime) |
+| **Docker Desktop** (o Engine + Compose Plugin) | 24.x | Esecuzione dell'infrastruttura containerizzata |
+| **Node.js** | 20 LTS | Build e dev server del frontend React |
+| **Git** | 2.x | Clonazione del repository |
+
+```bash
+# Installazione dotnet-ef (obbligatoria prima di eseguire le migrations)
+dotnet tool install --global dotnet-ef
+
+# Verifica installazione
+dotnet ef --version
+```
+
+> ⚠️ **Attenzione:** se al punto 4 compare l'errore *"dotnet-ef non esiste"* o *"comando non trovato"*, eseguire prima il comando di installazione riportato sopra. Il tool è globale e va installato una sola volta per macchina.
+
+---
+
+#### Avvio rapido — Linux / macOS (Bash)
+
+```bash
+# 1. Clona il repository
+git clone https://github.com/alisandre/ilp_efti_connector.git
+cd ilp_efti_connector
+
+# 2. Copia e configura le variabili d'ambiente
+cp infra/docker/.env.example infra/docker/.env
+# ⚠️  Edita .env con le tue configurazioni locali prima di procedere
+
+# 3. Avvia lo stack completo (profilo 'dev' include il mock MILOS)
+./scripts/dev-up.sh
+# oppure manualmente:
+cd infra/docker && docker compose --profile dev up -d --build && cd ../..
+
+# 4. Applica le migrations del database (attendi ~20s che MariaDB sia healthy)
+dotnet ef database update \
+  --project src/Core/ilp_efti_connector.Infrastructure \
+  --startup-project src/Services/ilp_efti_connector.ApiGateway
+
+# 5. Keycloak importa il realm automaticamente all'avvio da infra/keycloak/realm-efti_connector.json
+#    (il volume Docker monta infra/keycloak → /opt/keycloak/data/import nel container)
+#    Se occorre reimportare manualmente:
+docker exec ilp-efti-connector-keycloak \
+  /opt/keycloak/bin/kc.sh import \
+  --file /opt/keycloak/data/import/realm-efti_connector.json
+```
+
+---
+
+#### Avvio rapido — Windows (PowerShell)
+
+```powershell
+# Prerequisiti: Docker Desktop installato e in esecuzione, Git, .NET SDK 9, dotnet-ef
+
+# 1. Clona il repository
+git clone https://github.com/alisandre/ilp_efti_connector.git
+cd ilp_efti_connector
+
+# 2. Copia e configura le variabili d'ambiente
+copy infra\docker\.env.example infra\docker\.env
+# ⚠️  Apri infra\docker\.env con un editor e modifica le password prima di procedere
+
+# 3. Avvia lo stack completo
+cd infra\docker && docker compose --profile dev up -d --build && cd ..\..
+
+# 4. Applica le migrations del database (attendi ~20s che MariaDB sia healthy)
+dotnet ef database update `
+  --project src\Core\ilp_efti_connector.Infrastructure `
+  --startup-project src\Services\ilp_efti_connector.ApiGateway `
+  --connection "Server=localhost;Port=3306;Database=efti_connector;User=efti_user;Password=MariaDB@2026!;"
+
+# 5. Keycloak importa il realm automaticamente all'avvio
+#    (il volume Docker monta infra\keycloak → /opt/keycloak/data/import nel container)
+#    Se occorre reimportare manualmente:
+docker exec ilp-efti-connector-keycloak `
+  /opt/keycloak/bin/kc.sh import `
+  --file /opt/keycloak/data/import/realm-efti_connector.json
+```
+
+---
+
+#### Servizi esposti dopo l'avvio
+
+| Servizio | Porta / URL | Credenziali dev |
+|---|---|---|
+| **MariaDB** | `localhost:3306` · DB: `efti_connector` | `efti_user / MariaDB@2026!` |
+| **RabbitMQ** | `localhost:5672` (AMQP) · [UI](http://localhost:15672) | `efti_rabbit / changeme_rabbit` |
+| **Redis** | `localhost:6379` | nessuna password |
+| **Keycloak** | [http://localhost:8080](http://localhost:8080) · realm `efti_connector` | `admin / changeme_kc` |
+| **Seq** (log aggregator) | [http://localhost:8888](http://localhost:8888) · ingestion: `5341` | — |
+| **Prometheus** | [http://localhost:9090](http://localhost:9090) | — |
+| **Grafana** | [http://localhost:3001](http://localhost:3001) | `admin / admin` |
+| **WireMock — MILOS Mock** | [http://localhost:9999](http://localhost:9999) | solo profilo `dev` |
+
+> **Nota:** Le credenziali sono quelle del file `.env.example`. Prima del go-live modificare tutte le password nel file `infra/docker/.env` e **non committarlo** (è già in `.gitignore`).
+
+---
+
+#### Comandi utili (Windows PowerShell / Linux Bash)
+
+```bash
+# ── Stato dei container ───────────────────────────────────────────
+docker compose -f infra/docker/docker-compose.yml ps
+
+# ── Log in tempo reale di un servizio ────────────────────────────
+docker logs -f ilp-efti-connector-rabbitmq
+docker logs -f ilp-efti-connector-keycloak
+
+# ── Fermare lo stack ─────────────────────────────────────────────
+cd infra/docker
+docker compose down
+
+# ── Reset completo (rimuove anche i volumi dati) ──────────────────
+docker compose down -v
+```
+
+---
+
+### <a name="creazione-e-struttura-della-solution"></a>12.2 Struttura della Solution
+
+La solution è definita nel file `ilp_efti_connector.slnx` nella root del repository. La struttura adotta una Clean Architecture a più layer, con separazione netta tra Core, Shared, Gateway e Services.
+
+```
+ilp_efti_connector/
+│
+├── src/
+│   ├── Core/
+│   │   ├── ilp_efti_connector.Domain/              ← Entità, interfacce repository, enum di dominio
+│   │   ├── ilp_efti_connector.Application/         ← MediatR handlers, DTO, FluentValidation
+│   │   └── ilp_efti_connector.Infrastructure/      ← EF Core 9, DbContext, Repository, Migrations
+│   │
+│   ├── Shared/
+│   │   ├── ilp_efti_connector.Shared.Contracts/    ← Messaggi/eventi MassTransit (cross-service)
+│   │   └── ilp_efti_connector.Shared.Infrastructure/ ← Extensions: auth, messaging, OTel, Serilog
+│   │
+│   ├── Gateway/
+│   │   ├── ilp_efti_connector.Gateway.Contracts/   ← IEftiGateway, EcmrPayload, GatewayHealthStatus
+│   │   ├── ilp_efti_connector.Gateway.Milos/       ← MilosTfpGateway (Refit + Polly)
+│   │   └── ilp_efti_connector.Gateway.EftiNative/  ← EftiNativeGateway (Refit + OAuth2 mTLS)
+│   │
+│   └── Services/
+│       ├── ilp_efti_connector.ApiGateway/           ← Web API · porta 5052 · ingestion endpoint
+│       ├── ilp_efti_connector.FormInputService/     ← Web API · porta 5006 · form operatore
+│       ├── ilp_efti_connector.QueryProxyService/    ← Web API · porta 5021 · query + audit log
+│       ├── ilp_efti_connector.EftiGatewayService/   ← Worker Service · invio verso MILOS/EFTI
+│       ├── ilp_efti_connector.ValidationService/    ← Worker Service · validazione payload
+│       ├── ilp_efti_connector.NormalizationService/ ← Worker Service · upsert anagrafica + mapping
+│       ├── ilp_efti_connector.NotificationService/  ← Worker Service · webhook + SSE
+│       ├── ilp_efti_connector.ResponseHandlerService/ ← Worker Service · gestione risposta gateway
+│       └── ilp_efti_connector.RetryService/         ← Worker Service · backoff esponenziale / DLQ
+│
+├── tests/
+├── ilp_efti_connector.Gateway.Milos.Tests/      ← xUnit · Moq · FluentAssertions (22 test ✅)
+│   ├── ilp_efti_connector.Gateway.EftiNative.Tests/ ← xUnit · Moq (placeholder)
+│   ├── ilp_efti_connector.Application.Tests/        ← xUnit · Moq · FluentAssertions (placeholder)
+│   ├── ilp_efti_connector.Domain.Tests/             ← xUnit (placeholder)
+│   └── ilp_efti_connector.IntegrationTests/         ← xUnit · Testcontainers (placeholder)
+│
+├── frontend/
+│   └── efti-form/                   ← React 18 · TypeScript · Vite · Tailwind · Keycloak-js
+│
+├── infra/
+│   ├── docker/                      ← Stack completo: docker-compose.yml + .env.example
+│   ├── keycloak/                    ← realm-efti_connector.json (import automatico)
+│   ├── mariadb/init/                ← init.sql (CREATE DATABASE)
+│   ├── prometheus/                  ← prometheus.yml
+│   ├── grafana/                     ← dashboards + provisioning
+│   └── k8s/helm/                    ← Helm charts (produzione)
+│
+├── scripts/
+│   └── dev-up.sh                    ← Script di avvio stack completo
+│
+├── docker-compose.yml               ← Quickstart (solo MariaDB + RabbitMQ + Redis)
+└── Dockerfile                       ← Build multi-stage parametrico (ARG SERVICE_PROJECT)
+```
+
+#### Dipendenze tra i layer
+
+```
+Domain  ←  Application  ←  Infrastructure
+  ↑              ↑
+Gateway.Contracts     Shared.Contracts
+  ↑                         ↑
+Gateway.Milos         Services (tutti)
+Gateway.EftiNative
+```
+
+Il layer `Domain` non ha dipendenze esterne. Il layer `Application` conosce solo `Domain`. I `Services` sono entry point autonomi che orchestrano i layer sottostanti via Dependency Injection.
+
+---
+
+### <a name="configurazione-servizi"></a>12.3 Configurazione dei Servizi
+
+#### 12.3.1 Database — MariaDB + EF Core Migrations
+
+La stringa di connessione in ambiente Development è definita in ogni `appsettings.Development.json`:
+
+```json
+"ConnectionStrings": {
+  "DefaultConnection": "Server=localhost;Port=3306;Database=efti_connector;User=efti;Password=efti_dev;"
+}
+```
+
+Lo schema del database viene gestito tramite EF Core Migrations. Sono presenti due migrations:
+
+| Migration | Data | Contenuto |
+|---|---|---|
+| `20260302114905_InitialCreate` | 02/03/2026 | Schema completo — 12 tabelle |
+| `20260302115733_SeedTestSource` | 02/03/2026 | Seed sorgente di test (`TMS_TEST`) |
+
+Per applicare le migrations al database locale:
+
+```bash
+dotnet ef database update \
+  --project src/Core/ilp_efti_connector.Infrastructure \
+  --startup-project src/Services/ilp_efti_connector.ApiGateway
+```
+
+#### 12.3.2 Message Broker — RabbitMQ
+
+La configurazione MassTransit è centralizzata nell'extension `AddIlpEftiMessaging` di `Shared.Infrastructure`. Ogni servizio la richiama passando i propri Consumer in `appsettings.Development.json`:
+
+```json
+"RabbitMQ": {
+  "Host": "localhost",
+  "VirtualHost": "/",
+  "Username": "guest",
+  "Password": "guest"
+}
+```
+
+Il virtual host in produzione è `efti` (da `.env`). In development si usa `/` per semplicità con il `docker-compose.yml` root.
+
+#### 12.3.3 Identity Provider — Keycloak
+
+Keycloak viene avviato in modalità `start-dev` con import automatico del realm da `infra/keycloak/realm-efti_connector.json`.
+
+**Realm:** `efti_connector`  
+**URL locale:** `http://localhost:8080`  
+**Admin console:** `http://localhost:8080/admin` (credenziali da `.env`: `admin / changeme_kc`)
+
+**Ruoli applicativi:**
+
+| Ruolo | Permessi |
+|---|---|
+| `efti-operator` | Inserimento e-CMR via form, visualizzazione operazioni proprie |
+| `efti-supervisor` | Accesso a tutte le operazioni, riprocessamento DLQ |
+| `efti-admin` | Gestione utenti, sorgenti, switch provider MILOS ↔ EFTI Nativo |
+| `efti-service` | Account di servizio M2M per i microservizi backend |
+
+**Client OAuth2:**
+
+| Client ID | Tipo | Utilizzo |
+|---|---|---|
+| `efti-form-frontend` | Public (PKCE) | SPA React — login interattivo operatori |
+| `efti-api` | Confidential (secret `efti-api-secret-dev`) | M2M — microservizi backend |
+
+**Utenti di test precaricati:**
+
+| Username | Password | Ruoli |
+|---|---|---|
+| `efti-admin` | `Admin@2026!` | admin + supervisor + operator |
+| `efti-operator` | `Operator@2026!` | operator |
+
+#### 12.3.4 Gateway EFTI — EftiGatewayService
+
+La configurazione del provider attivo si trova in `src/Services/ilp_efti_connector.EftiGatewayService/appsettings.Development.json`:
+
+```json
+"EftiGateway": {
+  "Provider": "MILOS",
+  "Milos": {
+    "BaseUrl": "http://localhost:9999/",
+    "ApiKey": "<dev-api-key>",
+    "TimeoutSeconds": 30
+  },
+  "EftiNative": {
+    "BaseUrl": "https://efti-gate-test.example.eu/",
+    "TokenEndpoint": "https://auth-test.efti.eu/oauth2/token",
+    "ClientId": "<dev-client-id>",
+    "CertificatePath": "certs/dev-efti.pfx",
+    "Scope": "efti",
+    "TimeoutSeconds": 30
+  }
+}
+```
+
+In sviluppo locale, `Milos.BaseUrl` punta al mock WireMock (`http://localhost:9999`) avviato con il profilo `dev`. Per testare contro la sandbox MILOS reale, sostituire il valore con l'URL fornito dal partner.
+
+#### 12.3.5 Frontend React
+
+Il frontend si trova in `frontend/efti-form`. Utilizza Vite come dev server (porta `5173`).
+
+```bash
+cd frontend/efti-form
+npm install
+npm run dev       # http://localhost:5173
+npm run build     # Output in dist/ per produzione
+npm run preview   # Anteprima build di produzione (porta 4173)
+```
+
+La configurazione di Keycloak lato frontend si trova in `frontend/efti-form/keycloak.ts`. In sviluppo punta a `http://localhost:8080` con realm `efti_connector` e client `efti-form-frontend`.
+
+#### 12.3.6 Avvio dei Microservizi .NET in Sviluppo
+
+Ogni microservizio può essere avviato individualmente con `dotnet run`. I servizi con API HTTP espongono Scalar UI per l'esplorazione degli endpoint in Development.
+
+```bash
+# ApiGateway — http://localhost:5052  (Scalar: /scalar/v1)
+dotnet run --project src/Services/ilp_efti_connector.ApiGateway
+
+# FormInputService — http://localhost:5006  (Scalar: /scalar/v1)
+dotnet run --project src/Services/ilp_efti_connector.FormInputService
+
+# QueryProxyService — http://localhost:5021  (Scalar: /scalar/v1)
+dotnet run --project src/Services/ilp_efti_connector.QueryProxyService
+
+# Worker Services (nessuna porta HTTP — si connettono a RabbitMQ)
+dotnet run --project src/Services/ilp_efti_connector.ValidationService
+dotnet run --project src/Services/ilp_efti_connector.NormalizationService
+dotnet run --project src/Services/ilp_efti_connector.EftiGatewayService
+dotnet run --project src/Services/ilp_efti_connector.ResponseHandlerService
+dotnet run --project src/Services/ilp_efti_connector.NotificationService
+dotnet run --project src/Services/ilp_efti_connector.RetryService
+```
+
+Per un flusso di elaborazione end-to-end completo è sufficiente avviare in parallelo: `ApiGateway`, `ValidationService`, `NormalizationService` ed `EftiGatewayService` (con il mock MILOS attivo).
+
+#### 12.3.7 Build Docker (Parametrica)
+
+Il `Dockerfile` root è parametrico e supporta la compilazione di qualunque microservizio tramite gli argomenti `SERVICE_PROJECT` e `SERVICE_ASSEMBLY`:
+
+```bash
+# Esempio per ApiGateway
+docker build \
+  --build-arg SERVICE_PROJECT=src/Services/ilp_efti_connector.ApiGateway/ilp_efti_connector.ApiGateway.csproj \
+  --build-arg SERVICE_ASSEMBLY=ilp_efti_connector.ApiGateway \
+  -t efti-api-gateway:local .
+```
+
+---
+
+### <a name="progetti-di-test-e-verifica"></a>12.4 Progetti di Test e Verifica
+
+Tutti i progetti di test usano **xUnit** come framework, **Moq** per il mocking e **FluentAssertions** per le asserzioni leggibili (dove applicabile).
+
+#### Esecuzione dei test
+
+```bash
+# Tutti i test dell'intera solution
+dotnet test
+
+# Singolo progetto
+dotnet test tests/ilp_efti_connector.Gateway.Milos.Tests
+
+# Con report di code coverage (genera file coverage.cobertura.xml)
+dotnet test --collect:"XPlat Code Coverage"
+```
+
+#### Struttura e stato attuale
+
+| Progetto | Tipo | Framework | Stato |
+|---|---|---|---|
+| `Gateway.Milos.Tests` | Unit | xUnit · Moq · FluentAssertions | ✅ 22 test — completo |
+| `Domain.Tests` | Unit | xUnit | 🔄 Struttura creata — test da popolare |
+| `Gateway.EftiNative.Tests` | Unit | xUnit · Moq · FluentAssertions | ✅ 23 test — completo |
+| `Application.Tests` | Unit | xUnit · Moq · FluentAssertions | ✅ 23 test — completo |
+| `IntegrationTests` | Integration | xUnit · Testcontainers.MariaDb · MassTransit.Testing | ✅ 16 test — completo |
+
+#### Dettaglio `Gateway.Milos.Tests` (unico suite completo)
+
+Il progetto `Gateway.Milos.Tests` contiene 21 test distribuiti su tre classi:
+
+| Classe di Test | N° Test | Copre |
+|---|---|---|
+| `MilosHashcodeCalculatorTests` | 5 | Calcolo SHA-256 del payload, idempotenza, ordinamento campi |
+| `EcmrPayloadToMilosMapperTests` | 10 | Mapping da modello interno a `ECMRRequest` MILOS |
+| `MilosTfpGatewayTests` | 7 | Chiamate HTTP Refit: send, update, delete, get, healthcheck + errori |
+
+#### Obiettivi di test pianificati
+
+- **`IntegrationTests`**: Test di integrazione con Testcontainers per MariaDB e RabbitMQ, validando il flusso completo dalla pubblicazione dell'evento `TransportSubmittedEvent` fino alla persistenza su DB.
+- **`Application.Tests`**: Test degli `IRequestHandler` MediatR (es. `GetAuditLogsQueryHandler`) con mock del layer Infrastructure.
+- **`Gateway.EftiNative.Tests`**: Analogia con `Gateway.Milos.Tests` — da implementare non appena `EftiNativeGateway` sarà completo (Fase 2).
+- **`Domain.Tests`**: Logica di dominio pura, validazioni invarianti di entità.
+
+---
+
+---
+
+## 13. Operations e CI/CD
+
+Questa sezione descrive il ciclo di vita del software in produzione: automazione della pipeline, orchestrazione Kubernetes, gestione sicura dei segreti, stack di osservabilità e procedure operative di riferimento.
+
+---
+
+### <a name="cicd-pipeline"></a>13.1 CI/CD Pipeline
+
+La cartella `.github/workflows/` è presente nel repository ma ancora vuota — la pipeline è progettata e documentata in `docs/INFRASTRUCTURE.md` ed è pronta per essere formalizzata in YAML. Di seguito la struttura prevista.
+
+#### Flusso generale
+
+```
+Push / PR  →  build-and-test  →  docker-build-push  →  deploy-staging
+                  ↓ (se fallisce, blocca tutto)
+              Unit Test · Integration Test · Coverage
+```
+
+#### Job `build-and-test`
+
+Il job di CI si avvia su ogni push verso `main` o `develop` e su ogni pull request. Fa girare i test contro infrastruttura reale spinupata come servizi GitHub Actions:
+
+| Servizio | Immagine | Variabili |
+|---|---|---|
+| **MariaDB** | `mariadb:11.4` | `MARIADB_DATABASE=efti_test` · `MARIADB_USER=efti_test` |
+| **RabbitMQ** | `rabbitmq:3.13-management` | `RABBITMQ_DEFAULT_VHOST=efti` |
+| **Redis** | `redis:7-alpine` | nessuna password in CI |
+
+Passi principali:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-dotnet@v4
+    with: { dotnet-version: "9.0.x" }
+
+  - run: dotnet restore
+  - run: dotnet build --no-restore --configuration Release
+
+  # Unit test (no infrastruttura)
+  - run: dotnet test tests/ilp_efti_connector.Domain.Tests
+                     tests/ilp_efti_connector.Application.Tests
+                     tests/ilp_efti_connector.Gateway.Milos.Tests
+               --no-build -c Release --logger trx
+
+  # Integration test (contro MariaDB + RabbitMQ + Redis reali)
+  - run: dotnet test tests/ilp_efti_connector.IntegrationTests
+               --no-build -c Release --logger trx
+    env:
+      ConnectionStrings__DefaultConnection: "Server=localhost;Port=3306;..."
+      RabbitMQ__Host: localhost
+      RabbitMQ__VirtualHost: efti
+```
+
+#### Job `docker-build-push`
+
+Condizionato al branch `main` e al superamento del job precedente. Usa la **strategy matrix** per costruire e pubblicare su GitHub Container Registry (GHCR) le immagini di tutti i microservizi tramite il `Dockerfile` parametrico root:
+
+| Microservizio | Argomento `SERVICE_PROJECT` | Tag GHCR |
+|---|---|---|
+| `ApiGateway` | `.../ilp_efti_connector.ApiGateway.csproj` | `ilp_efti_connector/apigateway:<sha>` |
+| `ValidationService` | `.../ilp_efti_connector.ValidationService.csproj` | `ilp_efti_connector/validationservice:<sha>` |
+| `NormalizationService` | `.../ilp_efti_connector.NormalizationService.csproj` | `ilp_efti_connector/normalizationservice:<sha>` |
+| `EftiGatewayService` | `.../ilp_efti_connector.EftiGatewayService.csproj` | `ilp_efti_connector/eftigatewayservice:<sha>` |
+| `ResponseHandlerService` | `.../ilp_efti_connector.ResponseHandlerService.csproj` | `ilp_efti_connector/responsehandlerservice:<sha>` |
+| `NotificationService` | `.../ilp_efti_connector.NotificationService.csproj` | `ilp_efti_connector/notificationservice:<sha>` |
+| `RetryService` | `.../ilp_efti_connector.RetryService.csproj` | `ilp_efti_connector/retryservice:<sha>` |
+| `FormInputService` | `.../ilp_efti_connector.FormInputService.csproj` | `ilp_efti_connector/forminputservice:<sha>` |
+| `QueryProxyService` | `.../ilp_efti_connector.QueryProxyService.csproj` | `ilp_efti_connector/queryproxyservice:<sha>` |
+
+Ogni build usa la `cache-from: type=gha` di GitHub Actions per ridurre i tempi di build sfruttando i layer Docker già processati nelle run precedenti.
+
+#### Job `deploy-staging`
+
+```bash
+helm upgrade --install efti-connector infra/k8s/helm/efti-connector \
+  --namespace efti-staging \
+  --values infra/k8s/helm/efti-connector/values.staging.yaml \
+  --set global.imageTag=${{ github.sha }} \
+  --wait --timeout 5m
+```
+
+---
+
+### <a name="produzione-e-orchestrazione"></a>13.2 Produzione e Orchestrazione (Kubernetes)
+
+#### Helm Chart
+
+Il chart risiede in `infra/k8s/helm/efti-connector/`. Allo stato attuale contiene i template skeleton di `Deployment`, `Service` e `ConfigMap`. Il file `values.yaml` atteso prevede la configurazione per tutti i microservizi, lo switch bifasico e le dipendenze clusterizzate.
+
+**Namespace di destinazione:**
+
+| Ambiente | Namespace |
+|---|---|
+| Staging | `efti-staging` |
+| Produzione | `efti-production` |
+
+**Replica e risorse per microservizio** (target produzione):
+
+| Servizio | Tipo | Replicas | CPU req/lim | RAM req/lim |
+|---|---|---|---|---|
+| `ApiGateway` | Web API | 2 | 100m / 500m | 128Mi / 512Mi |
+| `FormInputService` | Web API | 2 | 100m / 500m | 256Mi / 512Mi |
+| `QueryProxyService` | Web API | 2 | 100m / 500m | 128Mi / 512Mi |
+| `ValidationService` | Worker | 2 | 200m / 1000m | 256Mi / 1Gi |
+| `NormalizationService` | Worker | 2 | 200m / 1000m | 256Mi / 1Gi |
+| `EftiGatewayService` | Worker | 2 | 100m / 500m | 128Mi / 512Mi |
+| `ResponseHandlerService` | Worker | 1 | 100m / 500m | 128Mi / 256Mi |
+| `NotificationService` | Worker | 1 | 100m / 500m | 128Mi / 256Mi |
+| `RetryService` | Worker | 1 | 100m / 500m | 128Mi / 256Mi |
+
+**Horizontal Pod Autoscaler:** abilitato con `minReplicas: 2`, `maxReplicas: 10`, target CPU `70%`. Sfrutta il metric *consumer lag* di RabbitMQ per scalare i Worker Service sui picchi di traffico ERP.
+
+#### Strato di Storage Clusterizzato
+
+| Componente | Modalità Alta Disponibilità |
+|---|---|
+| **MariaDB 11.4** | Galera Cluster — 3 nodi multi-master, lock distribuiti sincroni |
+| **RabbitMQ 3.13** | Quorum Queues (protocollo Raft) — 3 nodi, tolleranza caduta leader |
+| **Redis 7** | Sentinel Mode — 1 master + 2 repliche, promozione automatica |
+
+#### Switch di Fase (Zero-Downtime) via Helm
+
+```bash
+# Attivazione Fase 2 — nessun downtime, rolling update automatico
+helm upgrade efti-connector infra/k8s/helm/efti-connector \
+  --namespace efti-production \
+  --reuse-values \
+  --set eftiGateway.provider=EftiNative \
+  --wait --timeout 5m
+
+# Verifica rollout
+kubectl rollout status deployment/efti-eftigatewayservice -n efti-production
+
+# Rollback immediato se necessario
+helm rollback efti-connector --namespace efti-production
+```
+
+---
+
+### <a name="secrets-management"></a>13.3 Secrets Management e Security
+
+#### Sviluppo Locale
+
+I segreti locali sono gestiti tramite il file `infra/docker/.env` (non committato — incluso in `.gitignore`). Il template `infra/docker/.env.example` fornisce tutti i placeholder necessari.
+
+```bash
+# .gitignore (sicurezza minima garantita dal repository)
+infra/docker/.env
+*.pfx
+*.p12
+certs/
+```
+
+Per sviluppo senza Docker, si possono usare i **.NET User Secrets**:
+
+```bash
+# Inizializzazione
+dotnet user-secrets init --project src/Services/ilp_efti_connector.ApiGateway
+
+# Sovrascrittura della connection string locale
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" \
+  "Server=localhost;Port=3306;Database=efti_connector;User=efti;Password=efti_dev;" \
+  --project src/Services/ilp_efti_connector.ApiGateway
+
+# API Key MILOS (solo per EftiGatewayService)
+dotnet user-secrets set "EftiGateway:Milos:ApiKey" "<sandbox-key>" \
+  --project src/Services/ilp_efti_connector.EftiGatewayService
+```
+
+#### Produzione (Kubernetes + HashiCorp Vault)
+
+In produzione i secret Kubernetes vengono popolati tramite **Vault Agent** o **External Secrets Operator**, mai da CI direttamente:
+
+```bash
+# Secret database
+kubectl create secret generic efti-mariadb-secret \
+  --from-literal=mariadb-password="$(vault kv get -field=password secret/efti/mariadb)" \
+  --namespace efti-production
+
+# API Key MILOS (Fase 1)
+kubectl create secret generic efti-milos-secret \
+  --from-literal=api-key="$(vault kv get -field=api-key secret/efti/milos)" \
+  --namespace efti-production
+
+# Certificato X.509 EFTI Gate (Fase 2)
+kubectl create secret tls efti-x509-cert \
+  --cert=certs/efti-client.crt \
+  --key=certs/efti-client.key \
+  --namespace efti-production
+```
+
+La configurazione `Keycloak:RequireHttpsMetadata` è impostata a `true` in tutti gli `appsettings.json` di produzione. In sviluppo è accettata la modalità `false` esclusivamente sul realm in modalità `start-dev`.
+
+---
+
+### <a name="monitoring-health-checks-e-logging"></a>13.4 Monitoring, Health Checks e Logging
+
+#### Metriche Custom — `IlpEftiMetrics`
+
+Il file `src/Shared/ilp_efti_connector.Shared.Infrastructure/Metrics/IlpEftiMetrics.cs` definisce 7 metriche custom registrate nel meter `ilp_efti_connector` ed esposte via OpenTelemetry al Prometheus exporter:
+
+| Nome Metrica | Tipo | Descrizione |
+|---|---|---|
+| `transport_operations_submitted_total` | Counter | Operazioni ricevute dall'ApiGateway |
+| `efti_messages_sent_total` | Counter | Messaggi inviati a MILOS o EFTI Gate |
+| `efti_messages_acknowledged_total` | Counter | Messaggi con ACK finale ricevuto |
+| `efti_messages_failed_total` | Counter | Messaggi in errore |
+| `efti_messages_retried_total` | Counter | Tentativi di reinvio |
+| `efti_messages_dead_total` | Counter | Messaggi finiti in Dead Letter Queue |
+| `gateway_request_duration_ms` | Histogram | Durata chiamate HTTP verso il gateway (ms) |
+
+#### OpenTelemetry — `TelemetryExtensions`
+
+Ogni microservizio chiama `AddIlpEftiTelemetry(configuration, serviceName)` che registra:
+
+- **Tracing:** `AspNetCore`, `HttpClient`, `EntityFrameworkCore`
+- **Metrics:** `AspNetCore`, `HttpClient`, meter `ilp_efti_connector`
+- **Exporter:** `AddPrometheusExporter()` — endpoint `/metrics` scrapeabile da Prometheus
+
+```csharp
+// Uso in Program.cs
+builder.Services.AddIlpEftiTelemetry(builder.Configuration, "EftiGatewayService");
+// ...
+app.MapPrometheusScrapingEndpoint("/metrics");
+```
+
+#### Prometheus — Configurazione (`infra/prometheus/prometheus.yml`)
+
+Il file attuale è uno skeleton (`target: localhost:5000`). Il target definitivo elenca ogni microservizio come `job_name` separato. In produzione Kubernetes lo scraping avviene tramite `PodMonitor` o annotazioni sui pod:
+
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "efti-api-gateway"
+    static_configs: [{ targets: ["efti-api-gateway:8080"] }]
+    metrics_path: /metrics
+
+  - job_name: "efti-validation-service"
+    static_configs: [{ targets: ["efti-validation-service:8080"] }]
+
+  - job_name: "efti-gateway-service"
+    static_configs: [{ targets: ["efti-gateway-service:8080"] }]
+
+  - job_name: "rabbitmq"
+    static_configs: [{ targets: ["rabbitmq:15692"] }]   # RabbitMQ Prometheus plugin
+
+  - job_name: "mariadb"
+    static_configs: [{ targets: ["mariadb-exporter:9104"] }]
+```
+
+#### Grafana — Provisioning
+
+La directory `infra/grafana/provisioning/` contiene:
+- `datasources/datasource.yml` — datasource Prometheus (`http://prometheus:9090`) configurato come default
+- `dashboards/dashboard.json` — schema dashboard EFTI Connector (pannelli da completare)
+
+Il provisioning automatico è attivo: all'avvio del container Grafana le configurazioni vengono applicate senza intervento manuale.
+
+#### Health Checks — `HealthCheckExtensions`
+
+L'extension `AddIlpEftiHealthChecks` registra controlli su **MariaDB** (tag `db`, `ready`) e **Redis** (tag `cache`, `ready`, status `Degraded` se ko). RabbitMQ è coperto automaticamente dall'health check nativo di MassTransit.
+
+I servizi ASP.NET Core espongono due endpoint:
+
+| Endpoint | Predicate | Scopo |
+|---|---|---|
+| `/health/live` | Nessuno (solo ping) | Kubernetes liveness probe — il pod è vivo? |
+| `/health/ready` | Tag `ready` | Kubernetes readiness probe — il pod accetta traffico? |
+
+#### GatewayHealthMonitor
+
+`GatewayHealthMonitor` è il `BackgroundService` registrato unicamente in `EftiGatewayService/Program.cs`. Ogni **60 secondi** chiama `HealthCheckAsync()` su entrambi i provider (`MILOS`, `EFTI_NATIVE`) tramite `GatewaySelector` e struttura il log Serilog per Seq:
+
+```
+[INF] [GatewayHealthMonitor] Gateway MILOS       — HEALTHY   (42 ms)
+[WRN] [GatewayHealthMonitor] Gateway EFTI_NATIVE — UNHEALTHY: Connection refused
+```
+
+In Seq il filtro `@Properties['Source'] = 'GatewayHealthMonitor'` isola immediatamente lo storico dei ping gateway.
+
+#### Logging — `LoggingExtensions`
+
+`AddIlpEftiLogging(serviceName)` configura Serilog con:
+
+- Enrichers: `FromLogContext`, `WithEnvironmentName`, `WithProperty("ServiceName", ...)`
+- Override livello: `Microsoft.*` → `Warning`, `System.*` → `Warning`
+- Sink **Seq** se `Seq:ServerUrl` è configurata, altrimenti Console con template leggibile
+- **`CorrelationIdMiddleware`** propaga l'header `X-Correlation-ID` tra tutti i servizi e lo inietta nel `LogContext`, rendendo tracciabili richieste cross-service in Seq con un singolo filtro
+
+---
+
+### <a name="runbook-operativo"></a>13.5 Runbook Operativo
+
+#### Comandi di uso quotidiano
+
+```bash
+# ── Stato stack locale ────────────────────────────────────────────
+docker compose ps
+kubectl get pods -n efti-production
+
+# ── Log in tempo reale ────────────────────────────────────────────
+docker logs -f ilp-efti-connector-eftigatewayservice
+kubectl logs -f deployment/efti-eftigatewayservice -n efti-production
+# oppure: http://localhost:8888 (Seq) con filtro CorrelationId
+
+# ── Riavvio di un singolo servizio ────────────────────────────────
+docker compose restart                                  # tutti
+kubectl rollout restart deployment/efti-validationservice -n efti-production
+
+# ── Applicare nuove migrations ────────────────────────────────────
+dotnet ef database update \
+  --project src/Core/ilp_efti_connector.Infrastructure \
+  --startup-project src/Services/ilp_efti_connector.ApiGateway
+```
+
+#### Gestione Dead Letter Queue
+
+```bash
+# Visualizza code con messaggi in DLQ
+docker exec ilp-efti-connector-rabbitmq \
+  rabbitmqadmin list queues name messages
+
+# Svuota DLQ (ATTENZIONE: messaggi persi definitivamente)
+docker exec ilp-efti-connector-rabbitmq \
+  rabbitmqadmin purge queue name=dead.letter
+
+# Riprocessamento manuale: dal pannello React → modulo "Dead Letter Queue"
+# L'operatore edita il JSON grezzo e preme "Re-Queue"
+```
+
+#### Switch Provider MILOS ↔ EFTI Native
+
+```bash
+# Produzione — attivazione Fase 2 (zero-downtime)
+helm upgrade efti-connector infra/k8s/helm/efti-connector \
+  --namespace efti-production --reuse-values \
+  --set eftiGateway.provider=EftiNative --wait --timeout 5m
+
+# Rollback immediato a MILOS
+helm rollback efti-connector --namespace efti-production
+
+# Sviluppo locale — modifica appsettings.Development.json
+# EftiGateway:Provider → "EftiNative"
+```
+
+#### Backup Database
+
+```bash
+docker exec ilp-efti-connector-mariadb mariadb-dump \
+  -u root -p"${MARIADB_ROOT_PASSWORD}" \
+  --all-databases > backup-$(date +%Y%m%d-%H%M%S).sql
+```
+
+#### Verifica certificato X.509 (Fase 2)
+
+```bash
+openssl x509 -in certs/efti-client.crt -noout -dates
+# notBefore=...
+# notAfter=...   ← scadenza da monitorare in Grafana con alert preventivo
+```
+
+#### Checklist Go-Live — Fase 1 (MILOS TFP)
+
+```
+[ ] Stack infrastruttura avviato (docker compose up -d) e tutti i servizi healthy
+[ ] Migrations applicate (dotnet ef database update)
+[ ] Realm Keycloak importato — utenti di test verificati
+[ ] API Key MILOS sandbox configurata (MILOS_API_KEY in .env / Vault)
+[ ] MILOS_BASE_URL punta alla sandbox reale (non al mock locale)
+[ ] Test end-to-end: POST /api/v1/transport → eCMRID ricevuto in risposta
+[ ] Health checks verdi: GET /health/ready su tutti i microservizi
+[ ] Metriche in ingresso su Grafana (transport_operations_submitted_total > 0)
+[ ] Seq: log fluenti, nessun evento [ERR] nei 15 minuti post-deploy
+[ ] Ciclo webhook completato: notifica sorgente ricevuta per almeno 1 operazione
+```
+
+#### Checklist Go-Live — Fase 2 (EFTI Gate Nativo)
+
+```
+[ ] Certificato X.509 EU ottenuto da CA accreditata e caricato in Vault / k8s Secret
+[ ] ClientId + secret OAuth2 EFTI Gate configurati in Vault
+[ ] Test autenticazione OAuth2: token ottenuto da EFTI Gate con scope "efti"
+[ ] Test AS4 su sandbox EFTI Gate nazionale — ACK ricevuto correttamente
+[ ] EftiNativeGateway testato end-to-end (SendEcmrAsync → eCMRID di stato)
+[ ] Query Proxy Service: endpoint pubblici traccianti abilitati per le autorità
+[ ] Helm staging: eftiGateway.provider = EftiNative — zero errori per 24h
+[ ] Regression test Fase 1: path MILOS ancora funzionante come fallback
+[ ] Helm upgrade produzione con --wait e monitoraggio Grafana attivo
+[ ] Nessun alert Prometheus attivato nei 30 minuti post-deploy
+[ ] GatewayHealthMonitor: log "HEALTHY" per EFTI_NATIVE visibile in Seq
+```
+
+---
+
 *EFTI Connector Platform — Documentazione Architetturale v2.2 — Febbraio 2026*  
-*Sezione 4 aggiornata per rispecchiare il modello dati implementato (12 tabelle, EF Core 9 + Pomelo + MariaDB 11.4)*  
+*Sezione 5.1 corretta: stato iniziale VALIDATED (non DRAFT/SENDING)*
+*Sezione 5.2 aggiunta: Ciclo di Vita degli Stati TransportOperation — tabella, note su PENDING_VALIDATION, diagramma Mermaid, tabella EftiMessage*
 *Sezione 5 aggiornata: GatewayResilienceHandler (Polly v8), GatewayHealthMonitor, Query Proxy Service endpoint AuditLog*  
 *Sezione 11 aggiunta: Stato di Implementazione al Febbraio 2026*  
+*Sezione 12 aggiunta: Guida all'Ambiente di Sviluppo — struttura solution, configurazione servizi, test*  
+*Sezione 12.1 aggiornata: istruzioni avvio per Linux/macOS e Windows PowerShell, credenziali reali da .env.example, comandi utili*  
+*Sezione 13 aggiunta: Operations e CI/CD — pipeline, Kubernetes, secrets, monitoring, runbook*  
 *Fase 1: Integrazione MILOS TFP (Circle SpA) · Fase 2: Integrazione Diretta EFTI Gate Nazionale*

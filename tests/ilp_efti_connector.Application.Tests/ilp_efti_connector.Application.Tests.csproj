@@ -25,13 +25,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Core\ilp_efti_connector.Application\ilp_efti_connector.Application.csproj" />
     <ProjectReference Include="..\..\src\Core\ilp_efti_connector.Domain\ilp_efti_connector.Domain.csproj" />
-    <ProjectReference Include="..\..\src\Services\ilp_efti_connector.ValidationService\ilp_efti_connector.ValidationService.csproj" />
-    <ProjectReference Include="..\..\src\Shared\ilp_efti_connector.Shared.Contracts\ilp_efti_connector.Shared.Contracts.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\..\src\Core\ilp_efti_connector.Application\ilp_efti_connector.Application.csproj" />
-    <ProjectReference Include="..\..\src\Core\ilp_efti_connector.Domain\ilp_efti_connector.Domain.csproj" />
   </ItemGroup>
 
 </Project>

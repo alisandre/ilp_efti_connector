@@ -93,6 +93,7 @@ services:
       KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
       KC_HOSTNAME_STRICT: false
       KC_HTTP_ENABLED: true
+      KC_OVERRIDE: "true"
     ports:
       - "8080:8080"
     volumes:
@@ -165,6 +166,26 @@ services:
       - ../grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
+    networks:
+      - efti-net
+
+  # ── Frontend React ───────────────────────────────────────────
+  frontend:
+    build:
+      context: ../../src/Frontend/efti-form
+      dockerfile: Dockerfile
+      args:
+        VITE_KEYCLOAK_URL: ${VITE_KEYCLOAK_URL:-http://localhost:8080}
+        VITE_KEYCLOAK_REALM: ${VITE_KEYCLOAK_REALM:-efti_connector}
+        VITE_KEYCLOAK_CLIENT_ID: ${VITE_KEYCLOAK_CLIENT_ID:-efti-form-frontend}
+    container_name: ilp-efti-connector-frontend
+    restart: unless-stopped
+    ports:
+      - "3100:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # raggiunge i servizi .NET sull'host
+    depends_on:
+      - keycloak
     networks:
       - efti-net
 

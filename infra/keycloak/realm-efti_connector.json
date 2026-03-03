@@ -59,16 +59,31 @@
       "redirectUris": [
         "http://localhost:5173/*",
         "http://localhost:3000/*",
-        "http://localhost:4173/*"
+        "http://localhost:4173/*",
+        "http://localhost:3100/*"
       ],
       "webOrigins": [
         "http://localhost:5173",
         "http://localhost:3000",
-        "http://localhost:4173"
+        "http://localhost:4173",
+        "http://localhost:3100"
       ],
       "attributes": {
         "pkce.code.challenge.method": "S256"
       },
+      "protocolMappers": [
+        {
+          "name": "efti-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "efti-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ],
       "defaultClientScopes": [
         "web-origins",
         "acr",

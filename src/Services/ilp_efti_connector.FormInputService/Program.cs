@@ -1,11 +1,10 @@
 using FluentValidation;
-using ilp_efti_connector.Application.Customers.Queries.GetCustomerByCode;
+using ilp_efti_connector.Application.DependencyInjection;
 using ilp_efti_connector.FormInputService.Endpoints;
 using ilp_efti_connector.FormInputService.Validators;
 using ilp_efti_connector.Infrastructure.DependencyInjection;
 using ilp_efti_connector.Shared.Contracts.Dtos;
 using ilp_efti_connector.Shared.Infrastructure.Extensions;
-using MediatR;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,14 +12,13 @@ var builder = WebApplication.CreateBuilder(args);
 // ─── Infrastruttura ───────────────────────────────────────────────────────────
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// ─── MediatR — handler dal progetto Application ───────────────────────────────
-builder.Services.AddMediatR(cfg =>
-    cfg.RegisterServicesFromAssembly(typeof(GetCustomerByCodeQuery).Assembly));
+// ─── Application (MediatR + behaviours + validators) ─────────────────────────
+builder.Services.AddApplicationServices();
 
-// ─── FluentValidation ─────────────────────────────────────────────────────────
+// ─── FluentValidation (validator specifico del servizio) ─────────────────────
 builder.Services.AddScoped<IValidator<SourcePayloadDto>, SourcePayloadDtoValidator>();
 
-// ─── Autenticazione JWT (Keycloak) ────────────────────────────────────────────
+// ─── Autenticazione JWT (Keycloak) — sovrascrive ICurrentUserService ──────────
 builder.Services.AddIlpEftiAuth(builder.Configuration);
 
 // ─── MassTransit / RabbitMQ ───────────────────────────────────────────────────

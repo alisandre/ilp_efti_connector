@@ -25,3 +25,4 @@ certs/
 # Node / frontend
 frontend/**/node_modules/
 frontend/**/.vite/
+src/Frontend/efti-form/node_modules/

@@ -1,3 +1,5 @@
+using ilp_efti_connector.Application.Common.Interfaces;
+using ilp_efti_connector.Domain.Enums;
 using MediatR;
 
 namespace ilp_efti_connector.Application.Customers.Commands.UpsertCustomer;
@@ -20,11 +22,19 @@ public sealed record UpsertCustomerCommand(
     string? Province,
     string? CountryCode,
     string? UnLocode
-) : IRequest<UpsertCustomerResult>;
+) : IRequest<UpsertCustomerResult>, IAuditableCommand
+{
+    public AuditEntityType EntityType       => AuditEntityType.Customer;
+    public AuditActionType ActionType       => AuditActionType.Update;
+    public string          AuditDescription => $"Upsert cliente [{CustomerCode}]";
+}
 
 public sealed record UpsertCustomerResult(
     Guid CustomerId,
     Guid? DestinationId,
     bool IsNewCustomer,
     bool IsNewDestination
-);
+) : IAuditableResult
+{
+    public Guid AuditEntityId => CustomerId;
+}

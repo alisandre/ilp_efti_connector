@@ -1,3 +1,4 @@
+using ilp_efti_connector.Application.Common.Interfaces;
 using ilp_efti_connector.Domain.Enums;
 using MediatR;
 
@@ -27,13 +28,21 @@ public sealed record SubmitTransportOperationCommand(
     string? RawPayloadJson,
     // Provider gateway corrente (determina quale gateway invia)
     GatewayProvider GatewayProvider
-) : IRequest<SubmitTransportOperationResult>;
+) : IRequest<SubmitTransportOperationResult>, IAuditableCommand
+{
+    public AuditEntityType EntityType       => AuditEntityType.TransportOperation;
+    public AuditActionType ActionType       => AuditActionType.Create;
+    public string          AuditDescription => $"Creazione operazione [{OperationCode}]";
+}
 
 /// <summary>Risultato del comando: IDs di operation e messaggio creati.</summary>
 public sealed record SubmitTransportOperationResult(
     Guid TransportOperationId,
     Guid EftiMessageId
-);
+) : IAuditableResult
+{
+    public Guid AuditEntityId => TransportOperationId;
+}
 
 public sealed record ConsigneeData(
     string  Name,

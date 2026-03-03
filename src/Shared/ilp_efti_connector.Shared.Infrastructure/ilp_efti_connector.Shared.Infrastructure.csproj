@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\ilp_efti_connector.Shared.Contracts\ilp_efti_connector.Shared.Contracts.csproj" />
     <ProjectReference Include="..\..\Core\ilp_efti_connector.Domain\ilp_efti_connector.Domain.csproj" />
+    <ProjectReference Include="..\..\Core\ilp_efti_connector.Application\ilp_efti_connector.Application.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -20,6 +20,7 @@ public sealed class EftiSendRequestedConsumer : IConsumer<EftiSendRequestedEvent
 
     private readonly GatewaySelector _selector;
     private readonly IEftiMessageRepository _messages;
+    private readonly ITransportOperationRepository _operations;
     private readonly IUnitOfWork _uow;
     private readonly IPublishEndpoint _publish;
     private readonly ILogger<EftiSendRequestedConsumer> _logger;
@@ -27,15 +28,17 @@ public sealed class EftiSendRequestedConsumer : IConsumer<EftiSendRequestedEvent
     public EftiSendRequestedConsumer(
         GatewaySelector selector,
         IEftiMessageRepository messages,
+        ITransportOperationRepository operations,
         IUnitOfWork uow,
         IPublishEndpoint publish,
         ILogger<EftiSendRequestedConsumer> logger)
     {
-        _selector = selector;
-        _messages = messages;
-        _uow      = uow;
-        _publish  = publish;
-        _logger   = logger;
+        _selector   = selector;
+        _messages   = messages;
+        _operations = operations;
+        _uow        = uow;
+        _publish    = publish;
+        _logger     = logger;
     }
 
     public async Task Consume(ConsumeContext<EftiSendRequestedEvent> context)
@@ -81,6 +84,17 @@ public sealed class EftiSendRequestedConsumer : IConsumer<EftiSendRequestedEvent
         }
 
         var gateway = _selector.Get(gatewayProvider);
+
+        // Porta l'operazione in SENDING prima dell'invio
+        var operation = await _operations.GetByIdAsync(transportOperationId, ct);
+        if (operation is not null)
+        {
+            operation.Status    = TransportOperationStatus.SENDING;
+            operation.UpdatedAt = DateTime.UtcNow;
+            _operations.Update(operation);
+            await _uow.SaveChangesAsync(ct);
+        }
+
         var result  = await gateway.SendEcmrAsync(payload, ct);
 
         // Aggiorna il messaggio

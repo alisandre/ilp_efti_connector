@@ -10,7 +10,7 @@ namespace ilp_efti_connector.Gateway.EftiNative.Client;
 public interface IEftiGateClient
 {
     [Post("/datasets")]
-    Task<ApiResponse<EftiSubmitResponse>> CreateDatasetAsync([Body] EftiEcmrDataset dataset, CancellationToken ct = default);
+    Task<IApiResponse<EftiSubmitResponse>> CreateDatasetAsync([Body] EftiEcmrDataset dataset, CancellationToken ct = default);
 
     [Put("/datasets/{id}")]
     Task<IApiResponse> UpdateDatasetAsync(string id, [Body] EftiEcmrDataset dataset, CancellationToken ct = default);
@@ -19,7 +19,7 @@ public interface IEftiGateClient
     Task<IApiResponse> DeleteDatasetAsync(string id, CancellationToken ct = default);
 
     [Get("/datasets/{id}")]
-    Task<ApiResponse<EftiEcmrDataset>> GetDatasetAsync(string id, CancellationToken ct = default);
+    Task<IApiResponse<EftiEcmrDataset>> GetDatasetAsync(string id, CancellationToken ct = default);
 
     [Get("/health")]
     Task<IApiResponse> HealthCheckAsync(CancellationToken ct = default);

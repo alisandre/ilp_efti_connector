@@ -39,6 +39,14 @@ public sealed class EftiMessageRepository : IEftiMessageRepository
             .OrderBy(m => m.NextRetryAt)
             .ToListAsync(ct);
 
+    public async Task<IReadOnlyList<EftiMessage>> GetStuckPendingAsync(
+        TimeSpan stuckThreshold, CancellationToken ct = default)
+        => await _db.EftiMessages
+            .Where(m => m.Status == MessageStatus.PENDING
+                     && m.CreatedAt <= DateTime.UtcNow - stuckThreshold)
+            .OrderBy(m => m.CreatedAt)
+            .ToListAsync(ct);
+
     public async Task AddAsync(EftiMessage message, CancellationToken ct = default)
         => await _db.EftiMessages.AddAsync(message, ct);
 

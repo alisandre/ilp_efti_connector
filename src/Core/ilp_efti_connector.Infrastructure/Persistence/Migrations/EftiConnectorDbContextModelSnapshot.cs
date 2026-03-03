@@ -17,7 +17,7 @@ namespace ilp_efti_connector.Infrastructure.Persistence.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "9.0.1")
+                .HasAnnotation("ProductVersion", "9.0.0")
                 .HasAnnotation("Relational:MaxIdentifierLength", 64);
 
             MySqlModelBuilderExtensions.AutoIncrementColumns(modelBuilder);
@@ -401,6 +401,15 @@ namespace ilp_efti_connector.Infrastructure.Persistence.Migrations
                             IsActive = true,
                             Name = "Sorgente di Test",
                             Type = "TMS"
+                        },
+                        new
+                        {
+                            Id = new Guid("22222222-2222-2222-2222-222222222222"),
+                            Code = "TEST_FRONTEND",
+                            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsActive = true,
+                            Name = "Form di test per inserimento",
+                            Type = "MANUAL"
                         });
                 });
 

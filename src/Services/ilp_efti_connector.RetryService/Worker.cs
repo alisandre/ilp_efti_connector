@@ -43,16 +43,26 @@ public sealed class Worker : BackgroundService
 
     private async Task ProcessPendingRetriesAsync(CancellationToken ct)
     {
-        await using var scope     = _scopeFactory.CreateAsyncScope();
-        var messageRepo           = scope.ServiceProvider.GetRequiredService<IEftiMessageRepository>();
-        var sendEndpointProvider  = scope.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
+        await using var scope    = _scopeFactory.CreateAsyncScope();
+        var messageRepo          = scope.ServiceProvider.GetRequiredService<IEftiMessageRepository>();
+        var sendEndpointProvider = scope.ServiceProvider.GetRequiredService<ISendEndpointProvider>();
+        
+        _logger.LogDebug("RetryService: avvio ciclo di polling.");
 
-        var pending = await messageRepo.GetPendingForRetryAsync(DateTime.UtcNow, ct);
-        if (pending.Count == 0) return;
+        // Messaggi in RETRY con NextRetryAt scaduto
+        var retryMessages = await messageRepo.GetPendingForRetryAsync(DateTime.UtcNow, ct);
 
-        _logger.LogInformation("RetryService: trovati {Count} messaggi da reinviare.", pending.Count);
+        // Messaggi in PENDING bloccati da >5 min (EftiSendRequestedEvent perso al publish)
+        var stuckMessages = await messageRepo.GetStuckPendingAsync(TimeSpan.FromMinutes(5), ct);
 
-        foreach (var msg in pending)
+        var allMessages = retryMessages.Concat(stuckMessages).ToList();
+        if (allMessages.Count == 0) return;
+
+        _logger.LogInformation(
+            "RetryService: {Retry} RETRY + {Stuck} PENDING bloccati da reinviare.",
+            retryMessages.Count, stuckMessages.Count);
+
+        foreach (var msg in allMessages)
         {
             var cmd = new SendToGatewayCommand(
                 EftiMessageId:        msg.Id,

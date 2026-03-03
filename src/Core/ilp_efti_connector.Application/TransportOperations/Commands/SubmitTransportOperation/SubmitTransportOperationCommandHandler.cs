@@ -39,7 +39,7 @@ public sealed class SubmitTransportOperationCommandHandler
             DestinationId  = cmd.DestinationId,
             OperationCode  = cmd.OperationCode,
             DatasetType    = cmd.DatasetType,
-            Status         = TransportOperationStatus.PENDING_VALIDATION,
+            Status         = TransportOperationStatus.VALIDATED,
             RawPayloadJson = cmd.RawPayloadJson,
             CreatedAt      = now,
             UpdatedAt      = now
