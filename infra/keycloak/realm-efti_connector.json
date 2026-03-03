@@ -1,0 +1,175 @@
+{
+  "id": "efti_connector",
+  "realm": "efti_connector",
+  "displayName": "EFTI Connector",
+  "displayNameHtml": "<strong>EFTI Connector</strong>",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "loginTheme": "keycloak",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+
+  "roles": {
+    "realm": [
+      {
+        "name": "efti-operator",
+        "description": "Inserimento e-CMR via form, visualizzazione messaggi propri",
+        "composite": false
+      },
+      {
+        "name": "efti-supervisor",
+        "description": "Accesso a tutti i messaggi, riprocessamento DLQ",
+        "composite": false
+      },
+      {
+        "name": "efti-admin",
+        "description": "Gestione utenti, sorgenti, switch provider MILOS/EFTI",
+        "composite": false
+      },
+      {
+        "name": "efti-service",
+        "description": "Account di servizio per microservizi M2M",
+        "composite": false
+      }
+    ]
+  },
+
+  "clients": [
+    {
+      "clientId": "efti-form-frontend",
+      "name": "EFTI Form Frontend",
+      "description": "React SPA — inserimento e consultazione e-CMR",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "fullScopeAllowed": true,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://localhost:3000/*",
+        "http://localhost:4173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://localhost:4173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    },
+    {
+      "clientId": "efti-api",
+      "name": "EFTI API Backend",
+      "description": "Client confidenziale per i microservizi backend",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "efti-api-secret-dev",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "bearerOnly": false,
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
+
+  "users": [
+    {
+      "username": "efti-admin",
+      "email": "admin@efti.local",
+      "firstName": "EFTI",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "efti-admin",
+        "efti-supervisor",
+        "efti-operator"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin@2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "efti-operator",
+      "email": "operator@efti.local",
+      "firstName": "EFTI",
+      "lastName": "Operator",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "efti-operator"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Operator@2026!",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "efti-supervisor",
+      "email": "supervisor@efti.local",
+      "firstName": "EFTI",
+      "lastName": "Supervisor",
+      "enabled": true,
+      "emailVerified": true,
+      "realmRoles": [
+        "efti-supervisor",
+        "efti-operator"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Supervisor@2026!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

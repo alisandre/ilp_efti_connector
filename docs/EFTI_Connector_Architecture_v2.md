@@ -1,77 +1,93 @@
 # EFTI Connector Platform — Documentazione Architetturale
 
 > **Versione:** 2.2 · **Data:** Febbraio 2026  
-> Documento di riferimento architetturale per il progetto **EFTI Connector Hub**.
+> Documento di riferimento architetturale per il progetto **EFTI Connector Hub**.  
+> Repository: [github.com/alisandre/ilp_efti_connector](https://github.com/alisandre/ilp_efti_connector) · Branch: `main`
 
 ---
 
 ## Indice
 
-1. [Introduzione e Contesto](#1-introduzione-e-contesto)
-2. [Strategia di Integrazione a Due Fasi](#2-strategia-di-integrazione-a-due-fasi)
-3. [Stack Tecnologico](#3-stack-tecnologico)
-4. [Diagramma del Database](#4-diagramma-del-database)
-   - 4.1 `customers` · 4.2 `customer_destinations` · 4.3 `sources` · 4.4 `transport_operations`
-   - 4.5 `efti_messages` · 4.6 `transport_consignees` · 4.7 `transport_carriers`
-   - 4.8 `transport_details` · 4.9 `transport_consignment_items` · 4.10 `transport_packages`
-   - 4.11 `users` · 4.12 `audit_logs` · 4.13 Relazioni ER
-5. [Architettura a Microservizi](#5-architettura-a-microservizi)
-6. [Fase 1 — Integrazione con MILOS TFP](#6-fase-1--integrazione-con-milos-tfp)
-7. [Fase 2 — Integrazione Diretta con EFTI](#7-fase-2--integrazione-diretta-con-efti)
-8. [Frontend React](#8-frontend-react)
-9. [Sicurezza e Conformità Normativa](#9-sicurezza-e-conformità-normativa)
-10. [Deployment e Scalabilità](#10-deployment-e-scalabilità)
-11. [Stato di Implementazione](#11-stato-di-implementazione)
+- [1. Introduzione e Contesto](#1-introduzione-e-contesto)
+- [2. Strategia di Integrazione a Due Fasi](#2-strategia-di-integrazione-a-due-fasi)
+- [3. Stack Tecnologico](#3-stack-tecnologico)
+- [4. Diagramma del Database](#4-diagramma-del-database)
+- [5. Architettura a Microservizi](#5-architettura-a-microservizi)
+- [6. Fase 1 — Integrazione con MILOS TFP](#6-fase-1--integrazione-con-milos-tfp)
+- [7. Fase 2 — Integrazione Diretta con EFTI](#7-fase-2--integrazione-diretta-con-efti)
+- [8. Frontend React](#8-frontend-react)
+- [9. Sicurezza e Conformità Normativa](#9-sicurezza-e-conformità-normativa)
+- [10. Deployment e Scalabilità](#10-deployment-e-scalabilità)
+- [11. Stato di Implementazione](#11-stato-di-implementazione)
+
+*(Argomenti previsti per le Guide di Sviluppo e Operative)*
+- [12. Guida all'Ambiente di Sviluppo](#12-guida-all-ambiente-di-sviluppo)
+  - [Prerequisiti e Configurazione Locale (Docker Compose)](#prerequisiti-e-configurazione-locale)
+  - [Creazione e Struttura della Solution](#creazione-e-struttura-della-solution)
+  - [Configurazione dei Servizi (Database, Broker, Identity Provider, Gateways)](#configurazione-servizi)
+  - [Progetti di Test e Verifica](#progetti-di-test-e-verifica)
+- [13. Operations e CI/CD](#13-operations-e-cicd)
+  - [CI/CD Pipeline](#cicd-pipeline)
+  - [Produzione e Orchestrazione (Kubernetes)](#produzione-e-orchestrazione)
+  - [Secrets Management e Security](#secrets-management)
+  - [Monitoring, Health Checks e Logging (Prometheus, Grafana, Serilog)](#monitoring-health-checks-e-logging)
+  - [Runbook Operativo](#runbook-operativo)
 
 ---
 
 ## 1. Introduzione e Contesto
 
-**EFTI** (Electronic Freight Transport Information) è il framework normativo europeo (Regolamento EU 2020/1056) che impone la digitalizzazione dei documenti di trasporto merci. La piattaforma EFTI consente alle autorità di controllo di accedere elettronicamente alle informazioni di trasporto (eCMR, eAWB, eBL, eRSD, eDAD) in tempo reale.
+**EFTI** (Electronic Freight Transport Information) è il framework normativo europeo (Regolamento EU 2020/1056) che impone la digitalizzazione e la standardizzazione dei documenti di trasporto merci all'interno dell'Unione Europea. La piattaforma EFTI stabilisce le basi giuridiche e tecniche per consentire alle autorità pubbliche di controllo di accedere elettronicamente e in tempo reale alle informazioni di trasporto (eCMR per strada, eAWB per aereo, eBL per mare, eRSD per ferrovia).
 
-L'applicazione descritta in questo documento è un **EFTI Connector Hub**: un componente middleware multi-sorgente che funge da gateway centralizzato verso la piattaforma EFTI europea, permettendo a diversi moduli aziendali (TMS, WMS, ERP, dogana, vettori) di comunicare in modo uniforme con EFTI.
+L'applicazione descritta in questo documento è un **EFTI Connector Hub**: un componente middleware (architettura *Any-to-EFTI*) multi-sorgente che funge da gateway centralizzato verso l'infrastruttura EFTI. Questo hub permette a innumerevoli moduli aziendali preesistenti (TMS, WMS, ERP, software doganali, portali vettori) di comunicare in modo trasparente e uniforme con l'ecosistema istituzionale europeo, nascondendo la complessità dei protocolli di stato.
 
 ### 1.1 Obiettivi Principali
 
-- Centralizzare la comunicazione verso EFTI evitando N integrazioni punto-a-punto
-- Supportare più sorgenti dati (moduli interni, sistemi terzi, operatori umani via form)
-- Mantenere un'anagrafica interna di clienti (mittenti) e relative destinazioni, aggiornata automaticamente tramite il codice cliente ricevuto con ogni ordine
-- Garantire conformità ai dataset EFTI (eFTI dataset secondo EN 17532)
-- Offrire audit completo, retry automatico e monitoraggio dei messaggi
-- Fornire un'interfaccia React per inserimento manuale e consultazione
+- **Centralizzazione e Disaccoppiamento:** Creare un singolo punto d'uscita verso EFTI, evitando *N* integrazioni punto-a-punto dispendiose da mantenere per ciascun software aziendale.
+- **Supporto multi-sorgente omnicanale:** Accettare l'ingresso dati da moduli interni (tramite API REST e code di eventi), sistemi di terze parti e operatori umani (tramite interfaccia web dedicata).
+- **Gestione autonoma dell'anagrafica (Upsert intelligente):** Mantenere un'anagrafica di clienti (mittenti) e destinazioni che si auto-popola e si aggiorna dinamicamente decodificando in corsa i payload degli ordini in transito.
+- **Conformità e Validazione in-flight:** Garantire l'aderenza formale e semantica ai requirement normativi, validando l'input rispetto al rigoroso dataset standard europeo (EN 17532) prima della trasmissione.
+- **Resilienza e Osservabilità Operativa:** Offrire un audit log immutabile (cruciale per compliance e GDPR), meccanismi di retry avanzati per indisponibilità di rete (backoff esponenziale) e gestione automatizzata degli scarti (Dead Letter Queue).
+- **Gestione Manuale e Monitoraggio UI:** Fornire una Single Page Application moderna in React per permettere al team di supervisionare lo stato di invio dei viaggi, correggere errori o compilare documenti digitali a mano.
+
+### 1.2 Punti Focali di Business e Sfide Normative
+
+Il decollo dell'EFTI implica la sostituzione probatoria della carta in favore del formato puramente digitale basato su dati strutturati interconnessi (e non di semplici PDF inviati via mail). L'EFTI Connector Hub è pensato espressamente per affrontare questa transizione offrendo un vitale **layer di astrazione**:
+1. **Adattabilità Normativa:** Quando le specifiche EU sull'eFTI si aggiornano (es. nuovi codici LOCODE obbligatori, variazioni minor al protocollo), l'azienda deve aggiornare solo il Connector, senza intervenire sul codice o patti d'integrazione degli svariati ERP retrostanti.
+2. **Indipendenza dal Provider Esterno:** La capacità di passare dinamicamente da un partner terzo (es. la piattaforma MILOS usata per il ramp-up iniziale) ad una connessione istituzionale diretta con lo stato senza downtime, rappresentando di fatto una "polizza di assicurazione" tecnologica per l'azienda sul lungo termine.
 
 ---
 
 ## 2. Strategia di Integrazione a Due Fasi
 
-L'integrazione verso EFTI viene realizzata in **due fasi successive** per ridurre il rischio tecnico e accelerare il time-to-market.
+L'integrazione verso l'infrastruttura EFTI istituzionale non è banale: richiede rigorose certificazioni crittografiche (X.509 qualificate, eIDAS, AS4) e l'interfacciamento con nodi europei (eFTI Gates) attualmente in via di finalizzazione in molti stati membri.
+Per mitigare i rischi del progetto e consentire un test immediato sul campo (*time-to-market* ridotto), il Connector implementa un'architettura **bifase** basata su interfacce scambiabili dinamicamente.
 
-### 2.1 Fase 1 — Integrazione via MILOS TFP (MVP)
+### 2.1 Fase 1 — Integrazione via Provider Intermediario MILOS TFP (MVP)
 
-**MILOS TFP** (Circle SpA) è una piattaforma certificata che funge da intermediario verso l'EFTI Gate nazionale. Il Connector invia i dati a MILOS tramite API REST, e MILOS gestisce autonomamente tutta la comunicazione con l'infrastruttura EFTI (dataset EN 17532, eFTI Gate, QR Code per controlli su strada).
+In questa fase iniziale, il Connector si affida a **MILOS TFP** (piattaforma commerciale di Circle SpA) in veste di broker intermediario accreditato. Il Connector invia i dati di trasporto a MILOS usando semplici API REST. MILOS si fa carico di tutta la complessità crittografica e di "traduzione" governativa: convalida finale, invio sui nodi EFTI di stato e generazione del **QR Code di viaggio** (obbligatorio per i controlli della polizia stradale).
 
-**Vantaggi:**
-- Nessun onere di certificazione X.509/AS4 nella fase iniziale
-- API REST semplice e documentata (Circle SpA - ICD v1.0)
-- Time-to-market ridotto: il Connector non gestisce i protocolli EFTI nativi
-- Ambiente di test MILOS disponibile per validazione end-to-end
+**I vantaggi di questa fase del MVP:**
+- Barriera d'ingresso abbassata (si ignorano i protocolli complessi come eDelivery AS4).
+- Nessun acquisto e mantenimento immediato di certificati digitali per gli hub o test eIDAS.
+- Rollout rapido dei moduli TMS in produzione, permettendo all'azienda di digitalizzare le spedizioni.
+- Ottimo per le sessioni di training degli operatori di piazzale e doganali.
 
-### 2.2 Fase 2 — Integrazione Diretta con EFTI Gate (Evolutiva)
+### 2.2 Fase 2 — Integrazione Diretta e Nativa con l'EFTI Gate di Stato (Evolutiva)
 
-Il Connector acquisisce la capacità di comunicare **direttamente con l'EFTI Gate nazionale** senza dipendere da MILOS. Il layer di astrazione introdotto nella Fase 1 consente di aggiungere questo canale senza impattare il resto del sistema.
+Inizierà la sostituzione di MILOS. Il Connector attiverà la capacità di comunicare **direttamente con gli EFTI Gate istituzionali** (italiani o europei). Il layer di astrazione architetturale fa sì che questo *salto* avvenga a costo di sviluppo quasi nullo per il resto del sistema.
 
-**Caratteristiche:**
-- Indipendenza da intermediari terzi e relativi costi
-- Controllo diretto su SLA e resilienza EFTI
-- Supporto protocolli nativi: REST HTTPS, eDelivery AS4, OAuth2 + X.509
-- MILOS rimane disponibile come canale di fallback opzionale
+**I cambiamenti in Fase 2:**
+- Indipendenza assoluta: zero costi ricorrenti verso intermediari di terze parti e SLA gestiti internamente.
+- Gestione in house delle firme crittografiche qualificate, delle connessioni via AS4 e token basati su OAuth2 via Mutual TLS (mTLS).
+- Il provider MILOS diventa una connessione di fallback di emergenza.
 
-### 2.3 Layer di Astrazione (`IEftiGateway`)
+### 2.3 Astrazione e Feature Flags (Pattern `Strategy`)
 
-La chiave dell'architettura bifase è l'interfaccia `IEftiGateway` nel Gateway Service, che nasconde quale provider sia attivo:
+A livello di codice, il Core del Connector non conosce i dettagli né di MILOS né di EFTI Gate. Conosce solo un'interfaccia standardizzata (`IEftiGateway`). Questa struttura permette al sistema di deviare i messaggi sull'uno o sull'altro in millisecondi in base alla configurazione.
 
 ```csharp
-// Interfaccia comune — invariata tra Fase 1 e Fase 2
+// L'interfaccia architetturale immutabile sia in Fase 1 che in Fase 2
 public interface IEftiGateway
 {
     Task<EftiSendResult>      SendEcmrAsync(EcmrPayload payload, CancellationToken ct);
@@ -81,27 +97,27 @@ public interface IEftiGateway
     Task<GatewayHealthStatus> HealthCheckAsync(CancellationToken ct = default);
 }
 
-// Fase 1: implementazione via MILOS REST API
-public class MilosTfpGateway : IEftiGateway { ... }
+// Fase 1: Classe implementativa che traduce in chiamate REST verso MILOS
+public class MilosTfpGateway : IEftiGateway { /* ... */ }
 
-// Fase 2: implementazione diretta verso EFTI Gate
-public class EftiNativeGateway : IEftiGateway { ... }
+// Fase 2: Classe che traduce il payload e usa certificati di stato EFTI e AS4
+public class EftiNativeGateway : IEftiGateway { /* ... */ }
 ```
 
-La selezione avviene tramite feature flag in `appsettings.json`, senza deploy:
+Il cambio del comportamento avviene *live* alterando la configurazione, senza dover ricompilare o fermare in blocco il servizio:
 
 ```json
 {
   "EftiGateway": {
-    "Provider": "Milos",
+    "Provider": "Milos", // Switch operativo tra "Milos" o "EftiNative"
     "Milos": {
-      "BaseUrl": "https://<server>/api/ecmr-service/",
-      "ApiKey": "<from-vault>"
+      "BaseUrl": "https://milos.provider.example/api/",
+      "ApiKey": "<secret-from-vault>"
     },
     "EftiNative": {
-      "BaseUrl": "https://efti-gate.example.eu/",
+      "BaseUrl": "https://efti-gate.gov.it/api/",
       "ClientId": "<oauth2-client-id>",
-      "CertificatePath": "<from-vault>"
+      "CertificatePath": "<secret-from-vault>"
     }
   }
 }
@@ -111,686 +127,405 @@ La selezione avviene tramite feature flag in `appsettings.json`, senza deploy:
 
 ## 3. Stack Tecnologico
 
-### 3.1 Backend — C# / .NET
+Il Connector adotta principi di *Cloud-Native Development*: containerizzazione rigorosa, elaborazione asincrona a eventi, pattern moderni per l'infrastruttura Microsoft e isolamento delle componenti frontend/backend.
 
-| Componente | Tecnologia | Ruolo |
+### 3.1 Backend Enterprise in .NET 9
+
+L'applicativo si affida alle ultime tecnologie del framework Microsoft, studiato per latenze minime e massimi carichi in multi-threading.
+
+| Scopo Core | Componente / Framework | Note Operative |
 |---|---|---|
-| Runtime | .NET 9 | Piattaforma di esecuzione principale |
-| Framework API | ASP.NET Core 9 Web API | Esposizione endpoint REST |
-| Messaggistica | MassTransit + RabbitMQ | Bus eventi interno tra microservizi |
-| ORM | Entity Framework Core 9 + Pomelo.EntityFrameworkCore.MySql | Accesso dati su MariaDB |
-| Auth | Keycloak + JWT/OAuth2 | Identity provider, RBAC |
-| HTTP Client | Refit + Polly | Client tipizzato verso MILOS (F1) e EFTI Gate (F2) |
-| Validazione | FluentValidation | Validazione payload MILOS e EN 17532 |
-| Background Jobs | Hangfire | Retry asincrono, scheduling |
-| Logging | Serilog + Seq | Logging strutturato centralizzato |
-| Testing | xUnit + Moq + Testcontainers | Unit, integration e contract test |
+| Framwork Base | **.NET 9** (C# 13) | Performance estreme nella gestione della I/O HTTP e serializzazione Json. |
+| API Layer | **ASP.NET Core Web API** | Minimal API con OpenAPI (Swagger) esposto per documentare i contatti verso team terzi. |
+| Message Bus | **MassTransit + RabbitMQ** | Orchestrazione degli eventi interni (es. *EcmrValidated*, *TransmissionFailed*). Assicura solidità in caso di picchi. |
+| Data Access | **Entity Framework Core 9** | Object-Relational Mapper (ORM) connesso a driver di alto livello (*Pomelo.EntityFrameworkCore.MySql*). |
+| Resilienza H/C | **Polly v8** | Policy avanzate di timeout per le chiamate HTTP, es. *Circuit Breaker* (quando EFTI Gate o MILOS cadono), Retry ed Exponential backoff. |
+| Retry Asincroni | **Hangfire** | Scheduling della logica per ri-processare ordini scartati dal gateway e per lavori notturni (vacuum dati). |
+| Sicurezza Auth | **Keycloak (OAuth2/OIDC)** | Identity Provider decentralizzato per utenti umani (Dashboard) e generazione di token Machine-to-Machine. |
+| Telemetria | **Serilog + Seq** | Logging JSON strutturato. Trace ID propagati tra i microservizi per correlare gli errori in log distribuiti. |
 
-### 3.2 Frontend — React
+### 3.2 Frontend (Management ed Entry Point Umano)
 
-| Componente | Tecnologia | Ruolo |
+Una Single Page Application studiata per reattività ed ergonomia per il personale logistico.
+
+| Ruolo Componente | Strumento Frontend | Dettagli di Utilizzo |
 |---|---|---|
-| Framework | React 19 + TypeScript | SPA principale |
-| Build Tool | Vite | Bundler e dev server |
-| UI Library | Ant Design 5 / MUI | Componenti form, tabelle, layout |
-| State Management | Zustand + React Query | State globale + caching API |
-| Form Handling | React Hook Form + Zod | Validazione schema-first |
-| HTTP | Axios + OpenAPI codegen | Client auto-generato da spec OpenAPI |
-| Auth | OIDC Client (Keycloak) | SSO con il backend Keycloak |
-| Tabelle/Grid | TanStack Table v8 | Griglie dati con filtri e paginazione |
+| Piattaforma SPA | **React 19 + TypeScript** | Robustezza al compilatore e modern hook pattern. Tooling di aggregazione via **Vite**. |
+| Interfaccia Dati | **Ant Design / MUI** | Utilizzati intensivamente per griglie complesse (*TanStack Table*) con filtri a colonne su migliaia di transiti logistici. |
+| Form & Controlli | **React Hook Form + Zod** | Tutti i form (es: compilazione Ddt/Ecmr manuali a mano quando l'ERP fallisce) sono protetti da validazioni Zod sincronizzate con le logiche backend. |
+| Cache & Dati | **Zustand + React Query** | Gestione locale dello stato applicativo e server state ri-validato dal vivo evitando chiamate inefficaci e colli di bottiglia all'API. |
 
-### 3.3 Database e Storage
+### 3.3 Persistenza Dati e Servizi Infrastrutturali
 
-| Sistema | Tecnologia | Utilizzo |
+Tecnologie open source classiche scalabili affidate a storage persistente e clusterizzabile.
+
+| Layer di Rete | Tecnologia | Utilizzo nel Sistema |
 |---|---|---|
-| DB Principale | MariaDB 11.4 LTS | Dati transazionali, messaggi, audit log |
-| Cache | Redis 7 | Cache token, sessioni, rate limiting |
-| Message Broker | RabbitMQ 3.13 | Code messaggi inter-servizio |
-| Object Storage | MinIO / Azure Blob | Allegati documenti di trasporto |
+| Database Transazionale | **MariaDB 11.4** LTS | Custode inesorabile degli Audit Log immutabili, stati avanzamento spedizioni, anagrafiche aziende clienti e vettori. |
+| Cache in RAM & Lock | **Redis 7** | Usato massicciamente per memorizzare i token Bearer di ritorno, imporre Rate-Limiting alle richieste ERP per abuso e gestire lock distribuiti su ID doppioni. |
+| Code asincrone | **RabbitMQ 3.13** | Scatola d'ingranaggi pulsante per i messaggi tra l'esposizione del Connector e e l'invio fisico dell'eCMR (Pattern Produce/Consumer). |
+| Binary Storage | **MinIO (S3 compatibile)** | *[Futuro]* Necessario per accogliere foto dei carichi, moduli autografati digitalmente, file di bolle tradotti e file di attestazione scannerizzati generati. |
 
 ---
 
 ## 4. Diagramma del Database
 
-Il database **MariaDB 11.4** è strutturato in **12 tabelle**. Lo schema è **invariato tra Fase 1 e Fase 2**: cambia solo l'implementazione del gateway esterno, non il modello dati interno.
+Il database transazionale **MariaDB 11.4** è strutturato in **12 tabelle** interconnesse, ottimizzate per la deduplicazione anagrafica e la tracciabilità delle operazioni. Lo schema è stato progettato per restare **invariato** in caso di transizione dalla Fase 1 alla Fase 2.
+
+```mermaid
+erDiagram
+    %% Core Entities
+    sources ||--o{ customers : "generates"
+    sources ||--o{ transport_operations : "submits"
+
+    customers ||--o{ customer_destinations : "owns"
+    customers ||--o{ transport_operations : "is sender for"
+    customer_destinations ||--o{ transport_operations : "is delivery point for"
+
+    %% Transport Data Normalization
+    transport_operations ||--o{ efti_messages : "generates messages"
+    transport_operations ||--|| transport_consignees : "has 1 consignee"
+    transport_operations ||--o{ transport_carriers : "has N carriers"
+    transport_operations ||--|| transport_details : "has 1 details"
+    transport_operations ||--|| transport_consignment_items : "has 1 items summary"
+
+    transport_consignment_items ||--o{ transport_packages : "contains N packages"
+
+    %% Security & Audit
+    users ||--o{ transport_operations : "creates manually"
+    users ||--o{ audit_logs : "performs actions"
+```
 
 ---
 
 ### 4.1 Tabella: `customers`
 
+Anagrafica dei mittenti principali (spesso i clienti dell'azienda che installa il Connector).
+
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
 | `id` | `CHAR(36)` | PK | UUID interno |
-| `customer_code` | `VARCHAR(100)` | UNIQUE NOT NULL | Codice cliente dal sorgente — chiave di lookup |
+| `customer_code` | `VARCHAR(100)` | UNIQUE NOT NULL | Codice cliente dal sorgente ERP — **chiave di lookup** per upsert automatico |
 | `business_name` | `VARCHAR(300)` | NOT NULL | Ragione sociale del mittente |
 | `vat_number` | `VARCHAR(50)` | | Partita IVA / VAT number |
-| `eori_code` | `VARCHAR(20)` | | Codice EORI (obbligatorio EFTI cross-border) |
-| `contact_email` | `VARCHAR(255)` | | Email operativa |
-| `is_active` | `BOOLEAN` | DEFAULT true | Cliente abilitato |
-| `auto_created` | `BOOLEAN` | DEFAULT false | `true` = creato automaticamente da ordine |
+| `eori_code` | `VARCHAR(20)` | | Codice EORI (obbligatorio in EFTI per tratte cross-border) |
+| `is_active` | `BOOLEAN` | DEFAULT true | Soft delete /abilitazione |
+| `auto_created` | `BOOLEAN` | DEFAULT false | `true` = creato automaticamente da un payload in corsa, nessuna validazione umana |
 | `source_id` | `CHAR(36)` | FK `sources` | Sorgente che ha generato la creazione automatica |
-| `created_at` | `DATETIME` | NOT NULL | Prima creazione |
-| `updated_at` | `DATETIME` | NOT NULL | Ultimo aggiornamento |
-
----
 
 ### 4.2 Tabella: `customer_destinations`
+
+Indirizzi di scarico e terminal associati a un `customer` specifico. Si auto-popolano grazie a `destination_code`.
 
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
 | `id` | `CHAR(36)` | PK | UUID interno |
 | `customer_id` | `CHAR(36)` | FK `customers` NOT NULL | Cliente proprietario |
 | `destination_code` | `VARCHAR(100)` | UNIQUE NOT NULL | Codice destinazione dal sorgente |
-| `label` | `VARCHAR(200)` | | Etichetta leggibile |
 | `address_line1` | `VARCHAR(300)` | NOT NULL | Via e numero civico |
-| `city` | `VARCHAR(200)` | NOT NULL | Città |
-| `postal_code` | `VARCHAR(20)` | | CAP |
-| `province` | `VARCHAR(100)` | | Provincia / Regione |
-| `country_code` | `CHAR(2)` | NOT NULL | ISO 3166-1 alpha-2 |
-| `un_locode` | `VARCHAR(10)` | | Codice UN/LOCODE |
-| `is_default` | `BOOLEAN` | DEFAULT false | Destinazione predefinita |
-| `auto_created` | `BOOLEAN` | DEFAULT false | `true` = creata automaticamente |
-| `created_at` | `DATETIME` | NOT NULL | Data creazione |
-| `updated_at` | `DATETIME` | NOT NULL | Ultimo aggiornamento |
+| `city` | `VARCHAR(200)` | NOT NULL | Città e `country_code` (ISO 3166-1 alpha-2) |
+| `un_locode` | `VARCHAR(10)` | | Codice UN/LOCODE (fondamentale per le direttive marittime e ferrovia) |
+| `is_default` | `BOOLEAN` | DEFAULT false | Usata per fallback form UI |
 
-**Logica di Upsert Cliente/Destinazione** (identica in Fase 1 e Fase 2):
-
-```
-1. LOOKUP CLIENTE
-   Cerca customers WHERE customer_code = :code
-   → Trovato   : UPDATE business_name, vat_number, eori_code se cambiati
-   → Non trovato: INSERT con auto_created = true
-
-2. LOOKUP DESTINAZIONE
-   Cerca customer_destinations WHERE destination_code = :dest_code
-   → Trovata   : UPDATE address se cambiato
-   → Non trovata: INSERT con auto_created = true
-
-3. POPOLAMENTO PAYLOAD
-   FASE 1 → consignorSender (ECMRRequest MILOS) popolato da customers + customer_destinations
-   FASE 2 → Consignor (dataset EN 17532)       popolato dagli stessi dati
-```
-
----
+**Logica di Upsert Anagrafico Intelligente** (Avviene al volo, pre-invio):
+1. Cerca il record `WHERE customer_code = :code`.
+2. Se trovato, esegue `UPDATE` di p.iva o campi disallineati se più recenti.
+3. Se non trovata, lo crea al volo (`INSERT` con flag `auto_created = true`).
 
 ### 4.3 Tabella: `sources`
 
+I sistemi che parlano con il Connector. Ognuno ha una API Key dedicata (hashata) per motivi di auditing e partizionamento.
+
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
-| `id` | `CHAR(36)` | PK | Identificatore univoco sorgente |
-| `code` | `VARCHAR(50)` | UNIQUE NOT NULL | Codice breve (es. `TMS_ACME`) |
-| `name` | `VARCHAR(200)` | NOT NULL | Nome descrittivo |
-| `type` | `VARCHAR(20)` | NOT NULL | `TMS` \| `WMS` \| `ERP` \| `CUSTOMS` \| `MANUAL` |
-| `api_key_hash` | `VARCHAR(64)` | | Hash SHA-256 API key |
-| `is_active` | `BOOLEAN` | DEFAULT true | Abilitazione sorgente |
-| `config_json` | `JSON` | | Configurazione specifica (mapping, webhook, ecc.) |
-| `created_at` | `DATETIME` | NOT NULL | Data creazione |
-
----
+| `id` | `CHAR(36)` | PK | Identificatore univoco |
+| `code` | `VARCHAR(50)` | UNIQUE NOT NULL | Es. `TMS_MAGAZZINO_A`, `ERP_SAP_FINANCE` |
+| `type` | `VARCHAR(20)` | NOT NULL | Enum: `TMS` \| `WMS` \| `ERP` \| `MANUAL` (Front-end) |
+| `api_key_hash` | `VARCHAR(64)` | | Hash SHA-256 della API key Bearer usata |
+| `config_json` | `JSON` | | Configurazione flessibile per custom Webhook payload URLs di ritorno |
 
 ### 4.4 Tabella: `transport_operations`
 
-Nucleo del sistema. Ogni operazione di trasporto è collegata a un cliente, una destinazione e una sorgente. I dati del payload sono normalizzati nelle tabelle figlio (4.6–4.10); la colonna `raw_payload_json` conserva lo snapshot per debug.
+È il cuore del business logistico. Traccia la spedizione logica astraendo dalla singola chiamata HTTP.
 
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID operazione |
-| `source_id` | `CHAR(36)` | FK `sources` NOT NULL | Sorgente che ha creato l'operazione |
-| `customer_id` | `CHAR(36)` | FK `customers` NOT NULL | Cliente/mittente |
-| `destination_id` | `CHAR(36)` | FK `customer_destinations` | Destinazione di consegna |
-| `operation_code` | `VARCHAR(100)` | NOT NULL INDEXED | Codice CMR/DDT — corrisponde a `eCMRID` MILOS |
-| `dataset_type` | `VARCHAR(50)` | NOT NULL | `ECMR` \| `EDDT` |
-| `status` | `VARCHAR(30)` | NOT NULL | Vedi enum `TransportOperationStatus` |
-| `hashcode` | `VARCHAR(64)` | | Hash SHA-256 del payload (hashcodeDetails MILOS) |
-| `hashcode_algorithm` | `VARCHAR(20)` | | Es. `SHA-256` |
-| `raw_payload_json` | `JSON` | | Snapshot del payload al momento dell'invio — solo debug |
-| `created_at` | `DATETIME` | NOT NULL | Data creazione |
-| `updated_at` | `DATETIME` | NOT NULL | Ultimo aggiornamento |
-| `created_by_user_id` | `CHAR(36)` | FK `users` | Utente che ha creato l'operazione (form manuale) |
-| `updated_by_user_id` | `CHAR(36)` | FK `users` | Utente che ha effettuato l'ultimo aggiornamento |
-
-**Enum `TransportOperationStatus`:** `DRAFT`, `PENDING_VALIDATION`, `VALIDATED`, `SENDING`, `SENT`, `ACKNOWLEDGED`, `ERROR`, `CANCELLED`
-
----
+| `id` | `CHAR(36)` | PK | UUID operazione logistica |
+| `operation_code` | `VARCHAR(100)` | NOT NULL INDEXED | Codice univoco CMR/DDT (spesso `eCMRID` per MILOS) |
+| `dataset_type` | `VARCHAR(50)` | NOT NULL | `ECMR` (Strada) \| `EDDT` (DDT interno) |
+| `status` | `VARCHAR(30)` | NOT NULL | `DRAFT`, `VALIDATED`, `SENDING`, `SENT`, `ERROR`, ecc. |
+| `hashcode` | `VARCHAR(64)` | | Hash SHA-256 matematico del payload (richiesto per fini legali e non modificabilità) |
+| `raw_payload_json` | `JSON` | | Fotografia del JSON originale prima delle normalizzazioni (utile in caso di dispute e debug) |
 
 ### 4.5 Tabella: `efti_messages`
 
-Generica e invariata tra Fase 1 e Fase 2. La colonna `gateway_provider` traccia quale provider ha gestito il messaggio.
+Tabella che traccia i *tentativi fisici* di comunicazione verso il nodo di stato (invariata tra F1 e F2).
 
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
-| `id` | `CHAR(36)` | PK | ID messaggio interno |
-| `source_id` | `CHAR(36)` | FK `sources` NOT NULL | Sorgente originaria |
-| `transport_operation_id` | `CHAR(36)` | FK `transport_operations` NOT NULL | Operazione collegata |
-| `correlation_id` | `CHAR(36)` | NOT NULL INDEXED | ID correlazione end-to-end |
 | `gateway_provider` | `VARCHAR(20)` | NOT NULL | `MILOS` \| `EFTI_NATIVE` |
 | `direction` | `VARCHAR(10)` | NOT NULL | `INBOUND` \| `OUTBOUND` |
-| `dataset_type` | `VARCHAR(50)` | NOT NULL | `eCMR`, `eDDT`, `eAWB`, `eRSD`, `eBL`, `eDAD` |
-| `status` | `VARCHAR(20)` | NOT NULL INDEXED | `PENDING`, `SENT`, `ACKNOWLEDGED`, `ERROR`, `RETRY`, `DEAD` |
-| `payload_json` | `JSON` | NOT NULL | Payload effettivamente trasmesso al gateway |
-| `external_id` | `VARCHAR(100)` | INDEXED | F1: `eCMRID` MILOS — F2: `messageId` EFTI |
-| `external_uuid` | `VARCHAR(100)` | | F1: `uuid` dalla ECMRResponse MILOS |
-| `retry_count` | `SMALLINT` | DEFAULT 0 | Numero tentativi effettuati |
-| `next_retry_at` | `DATETIME` | INDEXED | Prossimo tentativo (backoff esponenziale) |
-| `sent_at` | `DATETIME` | | Timestamp invio al gateway |
-| `acknowledged_at` | `DATETIME` | | Timestamp ACK ricevuto |
-| `created_at` | `DATETIME` | NOT NULL INDEXED | Timestamp creazione |
+| `status` | `VARCHAR(20)` | NOT NULL INDEXED | `PENDING`, `ACKNOWLEDGED`, `RETRY`, `DEAD` |
+| `external_id` | `VARCHAR(100)` | INDEXED | F1: `eCMRID` da MILOS — F2: `UUID/MessageId` di stato EFTI |
+| `retry_count` | `SMALLINT` | DEFAULT 0 | Fondamentale per backoff asincrono (Hangfire) |
+
+### 4.6 — 4.10 Tabelle `transport_*` minori (Normalizzazione Payload)
+
+I dati del viaggio non vivono tutti in file JSON: vengono disassemblati ed esplosi in tabelle relazionali per poter fare statistiche e filtri d'interfaccia complessi (es. "Mostrami tutti i viaggi dove il vettore si chiama X").
+
+- `transport_consignees`: Chi riceve la merce (Street, City, EORI).
+- `transport_carriers`: Lista ordinata (1..N) di chi fisicamente trasporta (camionista/azienda). Campo importante: `tractor_plate` (targa motrice).
+- `transport_details`: Aspetti contrattuali. `incoterms` (EXW, DAP, FOB), `cargo_type` (FTL/LTL) o luoghi di Presa In Carico contrattuale.
+- `transport_consignment_items`: I pesi e volumi totali in kilogrammi o metri cubi (es: 12.000 kg totali).
+- `transport_packages`: Splittaggio al dettaglio in righe del carico, con descrizioni. Es: "Bancali", "Box", "Reefer" e i singoli pesi (es: 1200kg colli 1-5, 500kg colli 6-30).
+
+### 4.11 e 4.12 Sicurezza: `users` e `audit_logs`
+
+I log GDPR immutabili previsti per Art. 5 Reg. EU 2020/1056. È la "Security Box" legale.
+
+- L'entità `audit_logs` **non ha permessi di DELETE** a livello database.
+- Memorizza il JSON del record prima (`old_value_json`) e dopo la modifica (`new_value_json`).
+- Si incrocia nativamente via `keycloak_id` per identificare l'umano o via `api_key_hash` per le automazioni.
 
 ---
 
-### 4.6 Tabella: `transport_consignees`
+## 5. Architettura a Microservizi (Message-Driven)
 
-Destinatario dell'operazione di trasporto (relazione **1:1** con `transport_operations`). Corrisponde al campo `consignee` di `ECMRRequest` MILOS.
+Il backend è segmentato internamente usando il pattern In-Memory Publisher/Subscriber (MassTransit + RabbitMQ) per garantire fault-tolerance. Se un servizio vitale come l'invio esterno fallisce, l'ingestione tramite API non si blocca e non perde chiamate dall'ERP.
 
-| Colonna | Tipo | Vincolo | Descrizione |
+### 5.1 Macro-Flusso dei Componenti 
+
+1. **Ingestion & API Gateway Service (`Source Ingestion`)**: Espone la porta `POST /api/v1/transport` per l'ingresso da TMS/WMS esterni. Autentica il Jwt/API Key, verifica i limiti (Rate Limiting via Redis) e converte la richiesta sincrona in un pacchetto `TransportSubmitted` asincrono gettato su code RabbitMQ. Restituisce HTTP 202.
+2. **Validation Service**: Pesca il body e ne applica validazioni formali.
+   - Fase 1: Verifica presenza chiavi minime per i provider di mercato (MILOS chiede almeno P.IVA valida, Targa, Nazione ISO).
+   - Fase 2: Check formale *EN 17532* (struttura xml/json e id semanticamente stretti). Pubblica `TransportValidated` o genera eccezione notificata in dashboard.
+3. **Normalization & Mapping Service**: Cuore della logica transazionale interna. Applica la logica di *Upsert* esposta nella Sezione 4 sulle anagrafiche e genera le insert EF Core nel DB. Riformatta poi la stringa trasformandola da lingua universale a JSON proprietario di MILOS e apre la pratica in stato di `DRAFT / SENDING`.
+4. **EFTI Gateway Service *(Componente Bifasico Core)***: 
+   - Iniettato tramite `GatewaySelector` a runtime.
+   - Si serve di circuit breaker (`Polly v8 GatewayResilienceHandler`).
+   - Se il provider non risponde (es. MILOS in manutenzione programmata), ingabbia le eccezioni, mette il messaggio in status transitorio e demanda il problema a Hangfire per retry.
+5. **Response Handler e Webhook Notification Service**: Al check di ritorno OK dal provider. Esegue query su anagrafiche webhook e spara post HTTP all'indietro per svegliare e notificare in automatico gli ERP (così che i terminalisti possano far partire i camion col QR generato). In contemporanea, aggiorna in SSE (Server-Sent-Events) le UI React affinché i cruscotti diventino verdi real-time.
+6. **Query Proxy e Audit Service**: Endpoints per lettura read-only (es `GET /query/operations?page=3`). È l'unico punto che interagisce pesantemente con Redis cache per non uccidere il DB e appende **obbligatoriamente** righe sull'Audit GDPR per tracciare chi (quale autorità stradale e umana) ha sbirciato la lettera di vettura.
+
+---
+
+## 6. Fase 1 — Integrazione con MILOS TFP (MVP)
+
+### 6.1 Overview MILOS TFP (Partner Tecnologico)
+
+Per accelerare il *time-to-market* e bypassare le complessità della certificazione crittografica eIDAS ed eDelivery AS4 (richieste dai nodi di stato), la **Fase 1** adotta l'hub di mercato **MILOS TFP** (sviluppato da Circle SpA) come Intermediario Fiduciario accreditato. 
+
+MILOS offre all'EFTI Connector due layer architetturali trasparenti in cascata:
+- **e-CMR Service**: Un modulo di business puro per la compilazione della Lettera di Vettura Elettronica. È l'interfaccia con cui il Connector dialoga.
+- **eFTI / UUM&DS Platform**: Il motore che, invisibilmente, prende i dati dell'e-CMR, li impacchetta secondo la semantica **EN 17532**, firma digitalmente (tramite HSM / Accudire) e invia il plico al nodo EFTI nazionale. Inoltre genera il **QR Code univoco** da stampare o fornire sull'app dell'autista, fondamentale per ispezioni su strada.
+
+### 6.2 Contratti API (e-CMR Service)
+
+Le chiamate dal nostro *EFTI Gateway Service* a MILOS avvengono via **REST JSON (TLS 1.3)** e sono protette da *API Key* statica (long-lived) injectata tramite Vault di configurazione.
+
+**Endpoint Base**: `https://<milos-environment-url>/api/ecmr-service/`
+
+| Operazione | Metodo HTTP | Percorso Relativo | Scopo |
 |---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID |
-| `transport_operation_id` | `CHAR(36)` | FK `transport_operations` UNIQUE NOT NULL | Operazione proprietaria |
-| `name` | `VARCHAR(300)` | NOT NULL | Ragione sociale del destinatario |
-| `player_type` | `VARCHAR(30)` | NOT NULL | Tipicamente `CONSIGNEE` |
-| `street_name` | `VARCHAR(300)` | | Via e numero civico |
-| `post_code` | `VARCHAR(20)` | | Codice postale |
-| `city_name` | `VARCHAR(200)` | NOT NULL | Città |
-| `country_code` | `CHAR(2)` | NOT NULL | ISO 3166-1 alpha-2 |
-| `country_name` | `VARCHAR(100)` | | Nome paese per esteso |
-| `tax_registration` | `VARCHAR(100)` | | Partita IVA / numero fiscale |
-| `eori_code` | `VARCHAR(20)` | | Codice EORI |
+| **Issue e-CMR** | `POST` | `ecmr` | Invia un nuovo trasporto. Ritorna `eCMRID` autogenerato. |
+| **Update / Amend**| `PUT` | `ecmr/{id}` | Aggiorna dati di un viaggio non ancora chiuso (es. cambio targa). |
+| **Cancel** | `DELETE` | `ecmr/{id}` | Abortisce legalmente l'operazione. |
+| **Retrieve** | `GET` | `ecmr/get/{id}` | Forza un allineamento dello stato se i webhook di MILOS falliscono. |
 
-**Enum `PlayerType`:** `CONSIGNOR_SENDER`, `SELLER`, `CONSIGNEE`, `CARRIER`, `FREIGHT_FORWARDER`
+### 6.3 Data Mapping `ECMRRequest` vs Internal Model
 
----
+La mappatura è condotta dal *Normalization Service*. Ogni JSON transita attraverso la classe DTO `ECMRRequest` pretesa da MILOS. I campi principali sono associati come segue:
 
-### 4.7 Tabella: `transport_carriers`
-
-Vettori/trasportatori dell'operazione (relazione **1:N** con `transport_operations`). Corrisponde all'array `carriers[]` di `ECMRRequest` MILOS. L'ordine è preservato da `sort_order`.
-
-| Colonna | Tipo | Vincolo | Descrizione |
-|---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID |
-| `transport_operation_id` | `CHAR(36)` | FK `transport_operations` NOT NULL | Operazione proprietaria |
-| `sort_order` | `INT` | NOT NULL | Ordine nell'array dei vettori (1-based) |
-| `name` | `VARCHAR(300)` | NOT NULL | Ragione sociale del vettore |
-| `player_type` | `VARCHAR(30)` | NOT NULL | Tipicamente `CARRIER` |
-| `street_name` | `VARCHAR(300)` | | Via e numero civico |
-| `post_code` | `VARCHAR(20)` | | Codice postale |
-| `city_name` | `VARCHAR(200)` | NOT NULL | Città |
-| `country_code` | `CHAR(2)` | NOT NULL | ISO 3166-1 alpha-2 |
-| `country_name` | `VARCHAR(100)` | | Nome paese per esteso |
-| `tax_registration` | `VARCHAR(100)` | | Partita IVA / numero fiscale |
-| `eori_code` | `VARCHAR(20)` | | Codice EORI |
-| `tractor_plate` | `VARCHAR(20)` | NOT NULL | Targa del trattore/mezzo (`tractorPlate` MILOS) |
-| `equipment_category` | `VARCHAR(20)` | | Categoria mezzo (vedi enum `EcmrEquipmentCategory`) |
-
-**Enum `EcmrEquipmentCategory`:** `CONTAINER`, `SEMITRAILER`, `TRAILER`, `SWAP_BODY`, `TANK`, `FLAT_RACK`, `VAN`, `REEFER`, `OPEN_TOP`, `BULK`, `SILO`, `VEHICLE_CARRIER`, `OTHER`
-
----
-
-### 4.8 Tabella: `transport_details`
-
-Dettagli di trasporto: incoterms, cargo type e luoghi contrattuali (relazione **1:1** con `transport_operations`). Corrisponde a `transportDetails`, `contractualCarrierAcceptanceLocation` e `contractualConsigneeReceiptLocation` di `ECMRRequest` MILOS.
-
-| Colonna | Tipo | Vincolo | Descrizione |
-|---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID |
-| `transport_operation_id` | `CHAR(36)` | FK `transport_operations` UNIQUE NOT NULL | Operazione proprietaria |
-| `cargo_type` | `VARCHAR(20)` | | `FTL` \| `LTL` \| `GROUPAGE` |
-| `incoterms` | `VARCHAR(5)` | | `EXW`, `FCA`, `CPT`, `CIP`, `DAT`, `DAP`, `DDP`, `FAS`, `FOB`, `CFR`, `CIF` |
-| `acceptance_street_name` | `VARCHAR(300)` | | Via — luogo presa in carico vettore |
-| `acceptance_post_code` | `VARCHAR(20)` | | CAP — luogo presa in carico |
-| `acceptance_city_name` | `VARCHAR(200)` | | Città — luogo presa in carico |
-| `acceptance_country_code` | `CHAR(2)` | | Paese — luogo presa in carico |
-| `acceptance_country_name` | `VARCHAR(100)` | | Nome paese — luogo presa in carico |
-| `acceptance_date` | `DATETIME` | | Data/ora contrattuale presa in carico |
-| `receipt_street_name` | `VARCHAR(300)` | | Via — luogo consegna destinatario |
-| `receipt_post_code` | `VARCHAR(20)` | | CAP — luogo consegna |
-| `receipt_city_name` | `VARCHAR(200)` | | Città — luogo consegna |
-| `receipt_country_code` | `CHAR(2)` | | Paese — luogo consegna |
-| `receipt_country_name` | `VARCHAR(100)` | | Nome paese — luogo consegna |
-
----
-
-### 4.9 Tabella: `transport_consignment_items`
-
-Totali della spedizione (relazione **1:1** con `transport_operations`). Corrisponde all'oggetto `includedConsignmentItems` di `ECMRRequest` MILOS.
-
-| Colonna | Tipo | Vincolo | Descrizione |
-|---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID |
-| `transport_operation_id` | `CHAR(36)` | FK `transport_operations` UNIQUE NOT NULL | Operazione proprietaria |
-| `total_item_quantity` | `INT` | NOT NULL | Numero totale colli (`totalItemQuantity` MILOS) |
-| `total_weight` | `DECIMAL(10,3)` | NOT NULL | Peso lordo totale in kg (`totalWeight` MILOS) |
-| `total_volume` | `DECIMAL(10,3)` | | Volume totale in m³ (`totalVolume` MILOS) |
-
----
-
-### 4.10 Tabella: `transport_packages`
-
-Singoli colli della spedizione (relazione **1:N** con `transport_consignment_items`). Corrisponde all'array `transportPackages[]` all'interno di `includedConsignmentItems` MILOS.
-
-| Colonna | Tipo | Vincolo | Descrizione |
-|---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID |
-| `consignment_item_id` | `CHAR(36)` | FK `transport_consignment_items` NOT NULL | Spedizione proprietaria |
-| `sort_order` | `INT` | NOT NULL | Ordine nell'array dei colli (1-based) |
-| `shipping_marks` | `VARCHAR(100)` | | Marcatura/codice collo (`shippingMarks` MILOS) |
-| `item_quantity` | `INT` | NOT NULL | Numero unità nel collo (`itemQuantity` MILOS) |
-| `type_code` | `VARCHAR(50)` | | Tipo imballaggio (es. `PALLET`, `BOX`) |
-| `gross_weight` | `DECIMAL(10,3)` | NOT NULL | Peso lordo in kg (`grossWeight` MILOS) |
-| `gross_volume` | `DECIMAL(10,3)` | | Volume lordo in m³ (`grossVolume` MILOS) |
-
----
-
-### 4.11 Tabella: `users`
-
-Utenti del sistema, sincronizzati con Keycloak. Tracciati come autori di operazioni manuali e nei log di audit.
-
-| Colonna | Tipo | Vincolo | Descrizione |
-|---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID interno |
-| `username` | `VARCHAR(100)` | UNIQUE NOT NULL | Username univoco |
-| `email` | `VARCHAR(255)` | UNIQUE NOT NULL | Email dell'utente |
-| `full_name` | `VARCHAR(200)` | | Nome completo |
-| `is_active` | `BOOLEAN` | DEFAULT true | Utente abilitato |
-| `keycloak_id` | `VARCHAR(100)` | INDEXED | Subject ID Keycloak (OIDC `sub`) |
-| `roles_json` | `JSON` | | Ruoli RBAC in formato JSON |
-| `created_at` | `DATETIME` | NOT NULL | Data creazione |
-| `last_login_at` | `DATETIME` | | Data dell'ultimo accesso |
-
----
-
-### 4.12 Tabella: `audit_logs`
-
-Log di audit **immutabile** per conformità GDPR (Art. 5 Reg. EU 2020/1056). Traccia ogni azione su ogni entità del sistema.
-
-| Colonna | Tipo | Vincolo | Descrizione |
-|---|---|---|---|
-| `id` | `CHAR(36)` | PK | UUID |
-| `entity_type` | `VARCHAR(50)` | NOT NULL INDEXED | Entità soggetta all'azione (vedi enum) |
-| `entity_id` | `CHAR(36)` | NOT NULL INDEXED | ID dell'entità specifica |
-| `action_type` | `VARCHAR(20)` | NOT NULL | `Create`, `Read`, `Update`, `Delete`, `Send`, `Receive`, `Query`, `Export` |
-| `performed_by_user_id` | `CHAR(36)` | FK `users` INDEXED | Utente che ha eseguito l'azione |
-| `performed_by_source_id` | `CHAR(36)` | | Sorgente automatica che ha eseguito l'azione |
-| `description` | `VARCHAR(500)` | NOT NULL | Descrizione testuale dell'azione |
-| `old_value_json` | `JSON` | | Stato dell'entità prima della modifica |
-| `new_value_json` | `JSON` | | Stato dell'entità dopo la modifica |
-| `ip_address` | `VARCHAR(45)` | | Indirizzo IP (IPv4/IPv6) del client |
-| `user_agent` | `VARCHAR(500)` | | User Agent del client |
-| `created_at` | `DATETIME` | NOT NULL INDEXED | Timestamp azione |
-
-**Indice composito:** `(entity_type, entity_id, created_at)` — ottimizza le ricerche per entità nel tempo.
-
-**Enum `AuditEntityType`:** `Customer`, `CustomerDestination`, `Source`, `TransportOperation`, `EftiMessage`, `User`
-
-**Implementazione:** `IAuditLogRepository` (Domain) → `AuditLogRepository` (Infrastructure, EF Core 9). Endpoint esposti da `QueryProxyService`: `GET /api/query/audit-logs` (paginato, 6 filtri) e `GET /api/query/audit-logs/{id}` (dettaglio completo con old/new value JSON).
-
----
-
-### 4.13 Relazioni ER
-
-```
-sources (1) ──────── (N) customers                [FK: source_id, ON DELETE SET NULL]
-sources (1) ──────── (N) transport_operations     [FK: source_id, ON DELETE RESTRICT]
-sources (1) ──────── (N) efti_messages            [FK: source_id, ON DELETE RESTRICT]
-
-customers (1) ─────── (N) customer_destinations   [FK: customer_id, ON DELETE CASCADE]
-customers (1) ─────── (N) transport_operations    [FK: customer_id, ON DELETE RESTRICT]
-
-customer_destinations (1) ── (N) transport_operations  [FK: destination_id, ON DELETE SET NULL]
-
-users (1) ────────── (N) transport_operations     [FK: created_by_user_id, ON DELETE SET NULL]
-users (1) ────────── (N) transport_operations     [FK: updated_by_user_id, ON DELETE SET NULL]
-users (1) ────────── (N) audit_logs               [FK: performed_by_user_id, ON DELETE SET NULL]
-
-transport_operations (1) ─── (N) efti_messages         [FK: transport_operation_id, ON DELETE CASCADE]
-transport_operations (1) ─── (1) transport_consignees  [FK: transport_operation_id, ON DELETE CASCADE]
-transport_operations (1) ─── (N) transport_carriers    [FK: transport_operation_id, ON DELETE CASCADE]
-transport_operations (1) ─── (1) transport_details     [FK: transport_operation_id, ON DELETE CASCADE]
-transport_operations (1) ─── (1) transport_consignment_items [FK: transport_operation_id, ON DELETE CASCADE]
-
-transport_consignment_items (1) ── (N) transport_packages [FK: consignment_item_id, ON DELETE CASCADE]
-```
-
----
-
-## 5. Architettura a Microservizi
-
-L'architettura è **identica nelle due fasi**. L'unico componente che cambia internamente è l'**EFTI Gateway Service**.
-
-### 5.1 Microservizi di Input
-
-**API Gateway / Source Ingestion Service**: punto di ingresso unico, autenticazione API Key/JWT, pubblica `TransportSubmitted` su RabbitMQ, rate limiting Redis per `source_id`.
-
-**Validation Service**: valida il payload ricevuto. In Fase 1 valida la struttura ECMRRequest MILOS (campi obbligatori, codici paese ISO); in Fase 2 valida il dataset EN 17532 completo (EORI, UN LOCODE, semantica eFTI). Pubblica `TransportValidated` o `ValidationFailed`.
-
-**Normalization / Mapping Service**: esegue l'upsert cliente/destinazione (stesso codice in entrambe le fasi), poi mappa verso il formato del gateway attivo — `ECMRRequest` MILOS in Fase 1, dataset EN 17532 in Fase 2. Crea i record `efti_messages` e `transport_operations`.
-
-**Form Input Service (UI Backend)**: CRUD transport\_operations, autosave bozze, selezione cliente per codice, JWT Keycloak + RBAC.
-
-### 5.2 Microservizi di Output
-
-**EFTI Gateway Service** *(componente chiave della bifase)*: seleziona l'implementazione attiva tramite `IEftiGateway` e `GatewaySelector`. In Fase 1 chiama `POST/PUT/DELETE <server>/api/ecmr-service/ecmr` verso MILOS; in Fase 2 chiama l'EFTI Gate con OAuth2 + X.509. Resilienza Polly v8: `GatewayResilienceHandler` (DelegatingHandler su tutti i client HTTP) applica `ResiliencePolicies.CreateGatewayPipeline()` — retry esponenziale (3 tentativi, jitter), circuit breaker (failureRatio=0.5, minThroughput=5, break=30s), timeout 30s. `GatewayHealthMonitor` (BackgroundService) esegue `HealthCheckAsync` su ogni gateway ogni 60s e logga HEALTHY/UNHEALTHY con tempo di risposta. Salva `external_id` e `external_uuid` dalla risposta.
-
-**Response Handler Service**: elabora le risposte del gateway. In Fase 1 elabora `ECMRResponse` (eCMRID + uuid) da MILOS; in Fase 2 elabora ACK/NACK dall'EFTI Gate. Pubblica `SourceNotificationRequired`.
-
-**Notification / Webhook Service**: notifica i moduli sorgente via webhook HTTP, SSE per UI React, Hangfire retry max 24h. Invariato nelle due fasi.
-
-**Query Proxy Service**: espone endpoint REST per la consultazione interna del sistema — attivi in entrambe le fasi. Endpoint implementati: `GET /api/query/operations` (paginato, filtri stato/gateway/sorgente), `GET /api/query/operations/{id}` (dettaglio con timeline), `GET /api/query/audit-logs` (paginato, filtri entityType/entityId/actionType/userId/from/to), `GET /api/query/audit-logs/{id}` (dettaglio con oldValueJson/newValueJson). In Fase 2 aggiunge la gestione delle query delle autorità verso EFTI con cache Redis e audit GDPR obbligatorio per ogni accesso.
-
-**Retry & Dead Letter Service**: backoff esponenziale 1m → 5m → 15m → 1h → 6h → 24h, max 6 tentativi, poi DLQ con alert e dashboard. Invariato nelle due fasi.
-
----
-
-## 6. Fase 1 — Integrazione con MILOS TFP
-
-### 6.1 Overview MILOS TFP (Circle SpA)
-
-MILOS TFP integra due servizi:
-
-- **e-CMR Service**: crea e gestisce la lettera di vettura elettronica (e-CMR/e-DDT), gestisce il ciclo di vita e coordina le firme digitali (integrazione con Accudire per validità legale)
-- **eFTI Platform**: riceve i dati dall'e-CMR Service, genera il dataset eFTI, comunica con l'eFTI Gate nazionale e genera il **QR Code univoco** per controlli su strada
-
-Il Connector interagisce **esclusivamente con l'e-CMR Service** tramite REST. La propagazione verso l'eFTI Gate è automatica lato MILOS.
-
-### 6.2 API MILOS — E-CMR Service
-
-**Base URL**: `<server>/api/ecmr-service/`
-
-| Funzione | Metodo | Endpoint | Request | Response |
-|---|---|---|---|---|
-| Creazione e-CMR/e-DDT | `POST` | `ecmr` | `ECMRRequest` | `ECMRResponse` |
-| Modifica e-CMR/e-DDT | `PUT` | `ecmr/{id}` | `ECMRRequest` | `OK/KO` |
-| Cancellazione e-CMR/e-DDT | `DELETE` | `ecmr/{id}` | Id e-CMR | `OK/KO` |
-| Get e-CMR/e-DDT | `GET` | `ecmr/get/{id}` | Id e-CMR | `ECMRRequest` |
-
-### 6.3 Data Model MILOS
-
-**ECMRRequest** — payload principale inviato al Connector via MILOS:
-
-| Campo | Tipo | Mapping anagrafica interna |
+| Nodo MILOS `ECMRRequest` | Entità DB / Tabella Origine | Note e Regole di business |
 |---|---|---|
-| `shipping.eCMRID` | `String` | `transport_operations.operation_code` |
-| `shipping.datasetType` | `ECMR` \| `EDDT` | `transport_operations.dataset_type` |
-| `consignorSender.name` | `String` | `customers.business_name` |
-| `consignorSender.postalAddress` | `PostalAddress` | `customer_destinations.*` |
-| `consignorSender.taxRegistration` | `String` | `customers.vat_number` |
-| `consignorSender.EORICode` | `String` | `customers.eori_code` |
-| `consignee.name` | `String` | `transport_consignees.name` |
-| `consignee.type` | `PlayerType` | `transport_consignees.player_type` |
-| `consignee.postalAddress` | `PostalAddress` | `transport_consignees.city_name`, `country_code`, … |
-| `consignee.taxRegistration` | `String` | `transport_consignees.tax_registration` |
-| `consignee.EORICode` | `String` | `transport_consignees.eori_code` |
-| `carriers[].name` | `String` | `transport_carriers.name` (ordinati per `sort_order`) |
-| `carriers[].type` | `PlayerType` | `transport_carriers.player_type` |
-| `carriers[].postalAddress` | `PostalAddress` | `transport_carriers.city_name`, `country_code`, … |
-| `carriers[].taxRegistration` | `String` | `transport_carriers.tax_registration` |
-| `carriers[].tractorPlate` | `String` | `transport_carriers.tractor_plate` |
-| `carriers[].equipmentCategory` | `EcmrEquipmentCategory` | `transport_carriers.equipment_category` |
-| `contractualCarrierAcceptanceLocation.postalAddress` | `PostalAddress` | `transport_details.acceptance_city_name`, `acceptance_country_code`, … |
-| `contractualCarrierAcceptanceLocation.date` | `String` | `transport_details.acceptance_date` |
-| `contractualConsigneeReceiptLocation.postalAddress` | `PostalAddress` | `transport_details.receipt_city_name`, `receipt_country_code`, … |
-| `includedConsignmentItems.totalItemQuantity` | `Integer` | `transport_consignment_items.total_item_quantity` |
-| `includedConsignmentItems.totalWeight` | `Decimal` | `transport_consignment_items.total_weight` |
-| `includedConsignmentItems.totalVolume` | `Decimal` | `transport_consignment_items.total_volume` |
-| `includedConsignmentItems.transportPackages[].shippingMarks` | `String` | `transport_packages.shipping_marks` |
-| `includedConsignmentItems.transportPackages[].itemQuantity` | `Integer` | `transport_packages.item_quantity` |
-| `includedConsignmentItems.transportPackages[].typeCode` | `String` | `transport_packages.type_code` |
-| `includedConsignmentItems.transportPackages[].grossWeight` | `Decimal` | `transport_packages.gross_weight` |
-| `includedConsignmentItems.transportPackages[].grossVolume` | `Decimal` | `transport_packages.gross_volume` |
-| `transportDetails.cargoType` | `CargoType` | `transport_details.cargo_type` |
-| `transportDetails.incoterms` | `Incoterms` | `transport_details.incoterms` |
-| `hashcodeDetails.json` | `String` | `transport_operations.hashcode` |
-| `hashcodeDetails.algorithm` | `String` | `transport_operations.hashcode_algorithm` |
+| `shipping.eCMRID` | `transport_operations.operation_code` | Chiave di correlazione idempotente originata dal TMS. |
+| `consignorSender.*` | `customers` & `customer_destinations` | Dati Mittente e indirizzo pick-up. P.Iva o *EORI Code* obbligatori. |
+| `consignee.*` | `transport_consignees` | Destinatario finale (Receiver) e relativo scarico. |
+| `carriers[i].*` | `transport_carriers` | Array dei vettori. **`tractorPlate`** è blindato e obbligatorio per i controlli del QR Code stradale. |
+| `includedConsignmentItems` | `transport_packages` (totali & colli) | Sommatoria logica di pesi, numero colli, volumi e *shippingMarks*. |
+| `transportDetails.incoterms` | `transport_details.incoterms` | Condizioni di resa della merce (DAP, EXW, ecc.). |
+| `hashcodeDetails` | Elaborazione generata *in-transit* (C#) | Hash SHA-256 applicato all'intero payload pulito. La Piattaforma di stato scarta richieste con hash asimmetrico. |
 
-**ECMRResponse** — risposta alla creazione:
+### 6.4 Sequenza Outbound (Fase 1)
 
-| Campo | Tipo | Salvato in |
-|---|---|---|
-| `eCMRID` | `String` | `efti_messages.external_id` |
-| `uuid` | `String` | `efti_messages.external_uuid` |
-| `consignorSender` | `Player` | Dati mittente confermati da MILOS |
+Il seguente diagramma modella il viaggio di un payload all'interno della rete a microservizi nella Fase 1.
 
-**Enumerazioni principali MILOS:**
+```mermaid
+sequenceDiagram
+    autonumber
+    actor TMS as ERP Aziendale (TMS)
+    participant API as Ingestion API / Auth
+    participant Val as Validation & Upsert Service
+    participant Msg as RabbitMQ (Message Bus)
+    participant GTW as MILOS Gateway (Polly/HTTP)
+    participant MILOS as Piattaforma MILOS
 
-- `DatasetType`: `ECMR`, `EDDT`
-- `PlayerType`: `CONSIGNOR_SENDER`, `SELLER`, `CONSIGNEE`, `CARRIER`, `FREIGHT_FORWARDER`
-- `CargoType`: `FTL`, `LTL`, `groupage`
-- `Incoterms`: `EXW`, `FCA`, `CPT`, `CIP`, `DAT`, `DAP`, `DDP`, `FAS`, `FOB`, `CFR`, `CIF`
-- `EcmrEquipmentCategory`: `CONTAINER` (CN), `SEMITRAILER` (SM), `TRAILER` (TE), `SWAP_BODY` (SW), `TANK` (TN), e altri 12 valori
+    TMS->>API: POST /api/v1/transport (API Key)
+    API-->>TMS: 202 Accepted (CorrelationID)
+    API->>Msg: Publish [TransportSubmittedEvent]
 
-### 6.4 Flusso Outbound Fase 1
+    Msg->>Val: Consume & Validate Schema
+    Val->>Val: Upsert su `customers` e normalizzazione Db
+    Val->>Msg: Publish [EftiSendRequestedEvent]
 
-```
-1. SUBMIT     Modulo sorgente → POST /api/v1/transport  (API Key)
-                  ↓
-2. VALIDATE   Validation Service verifica struttura ECMRRequest MILOS
-              (eCMRID obbligatorio, consignorSender, consignee, carriers con tractorPlate)
-                  ↓
-3. UPSERT     Normalization Service:
-              · lookup/crea customer (customers.customer_code)
-              · lookup/crea destination (customer_destinations.destination_code)
-              · mappa payload → ECMRRequest MILOS
-              · popola consignorSender da customers + customer_destinations
-                  ↓
-4. ENQUEUE    efti_messages (status=PENDING, gateway_provider=MILOS) → EftiSendQueue
-                  ↓
-5. SEND       MilosTfpGateway:
-              POST <server>/api/ecmr-service/ecmr
-              Body: ECMRRequest JSON
-              MILOS risponde: ECMRResponse { eCMRID, uuid }
-                  ↓
-6. STORE      status → SENT
-              external_id = eCMRID, external_uuid = uuid
-                  ↓
-7. EFTI AUTO  MILOS internamente genera dataset eFTI → eFTI Gate → QR Code autista
-                  ↓
-8. NOTIFY     Notification Service avvisa sorgente via webhook
-```
+    Msg->>GTW: Consume Msg
+    GTW->>MILOS: HTTP POST /ecmr (Body: ECMRRequest)
 
-### 6.5 Esempio Payload MILOS (dataset minimo)
-
-```json
-{
-  "shipping": {
-    "eCMRID": "202526-IT-001",
-    "datasetType": "ECMR"
-  },
-  "consignorSender": {
-    "name": "Azienda Mittente S.r.l.",
-    "type": "CONSIGNOR_SENDER",
-    "postalAddress": {
-      "streetName": "Via del Mittente, 1",
-      "postCode": "20124",
-      "cityName": "Milano",
-      "countryCode": "IT",
-      "countryName": "Italy"
-    },
-    "taxRegistration": "07869320965",
-    "EORICode": "IT07869320965"
-  },
-  "consignee": {
-    "name": "Receiver S.P.A.",
-    "postalAddress": {
-      "streetName": "Calle del Destinatario, 2",
-      "cityName": "Barcelona",
-      "countryCode": "ES",
-      "countryName": "Spain"
-    },
-    "taxRegistration": "10000000001"
-  },
-  "carriers": [{
-    "name": "Trasportatore S.r.l.",
-    "postalAddress": {
-      "cityName": "Verona",
-      "countryCode": "IT",
-      "countryName": "Italy"
-    },
-    "taxRegistration": "10000000002",
-    "tractorPlate": "AA000AA"
-  }],
-  "contractualCarrierAcceptanceLocation": {
-    "postalAddress": {
-      "cityName": "Milano",
-      "countryCode": "IT",
-      "countryName": "Italy"
-    },
-    "date": "2026-03-01 08:00:00"
-  },
-  "contractualConsigneeReceiptLocation": {
-    "postalAddress": {
-      "cityName": "Barcelona",
-      "countryCode": "ES",
-      "countryName": "Spain"
-    }
-  },
-  "includedConsignmentItems": {
-    "transportPackages": [{
-      "shippingMarks": "COD0001",
-      "itemQuantity": 10,
-      "typeCode": "PALLET",
-      "grossWeight": 1200,
-      "grossVolume": 8
-    }],
-    "totalItemQuantity": 10,
-    "totalWeight": 1200,
-    "totalVolume": 8
-  },
-  "hashcodeDetails": {
-    "json": "<sha256-del-payload>",
-    "algorithm": "SHA-256"
-  }
-}
+    alt Success
+        MILOS-->>GTW: 200 OK { eCMRID, uuid }
+        GTW->>Msg: Publish [SendSuccessEvent]
+    else Failure (es. Dati P.Iva errati)
+        MILOS-->>GTW: 400 Bad Request
+        GTW->>Msg: Publish [TransmissionFailedEvent] → Dead Letter
+    else Timeout / Network
+        GTW--xMILOS: Connection Refused
+        GTW->>GTW: Polly Retry (Esponenziale)
+    end
 ```
 
 ---
 
-## 7. Fase 2 — Integrazione Diretta con EFTI
+## 7. Fase 2 — Integrazione Diretta con l'EFTI Gate di Stato
 
-### 7.1 Protocolli e Standard
+### 7.1 Overview del Paradigma Nativo
 
-| Standard | Descrizione |
+L'evoluzione prevista per il prodotto rimuove l'intermediario commerciale (MILOS) instaurando un canale *Machine-to-Machine* puro (M2M) direttamente verso i nodi (EFTI Gate) predisposti dagli Stati dell'Unione Europea. Questo approccio è **disaccoppiato contrattualmente** e garantisce alla piattaforma logistica una forte *Self-Sovereignty* digitale.
+
+### 7.2 Protocolli e Standard (Architettura di Rete EU)
+
+La connettività passa da una classica interazione "Web API API-Key based" a un'infrastruttura Enterprise regolamentata istituzionalmente:
+
+| Modulo Normativo | Specifica Tecnica Implementativa |
 |---|---|
-| REST over HTTPS | Interfaccia primaria con API EFTI Gate (TLS 1.3) |
-| eDelivery / AS4 | Protocollo obbligatorio per interoperabilità tra piattaforme EFTI nazionali |
-| EN 17532 | Standard europeo per i dataset eFTI |
-| OAuth2 + X.509 | Autenticazione verso EFTI con `client_credentials` e certificato qualificato |
-| eIDAS QES | Firma elettronica qualificata per eBL, eCMR qualificato |
+| **Data Payload (Standard)** | Conversione dal linguaggio interno verso XML/JSON secondo i rigidi standard UML europei **EN 17532**. |
+| **Livello Trasporto (B2G)** | Protocollo **eDelivery / AS4** su base mutual TLS (mTLS), obbligatorio per l'interoperabilità sicura e il non-ripudio. |
+| **Trust e Identità** | Passaggio dall'API Key al rilascio di **Token OAuth2 via eIDAS**, corroborati da *Certificati X.509 EU* archiviati in *Key Vault*. |
+| **Sicurezza Apposizione** | Modulo interno di **Firma Elettronica Qualificata (QES)** e generazione autonoma dell'URI dinamico (per il QR Code sul fronte mezzo). |
 
-### 7.2 Differenze rispetto alla Fase 1
+### 7.3 Tabella Comparativa di Transizione
 
-| Aspetto | Fase 1 (MILOS) | Fase 2 (EFTI Nativo) |
-|---|---|---|
-| Autenticazione | API Key MILOS | OAuth2 `client_credentials` + X.509 |
-| Protocollo | REST HTTP semplice | REST + eDelivery AS4 |
-| Formato payload | `ECMRRequest` MILOS | Dataset EN 17532 |
-| QR Code | Generato da MILOS | Generato da eFTI Gate o internamente |
-| Query autorità | Gestite da MILOS | Query Proxy Service attivo |
-| Firma digitale | MILOS/Accudire | Da implementare con eIDAS QES |
-| Certificato X.509 | Non richiesto | CA accreditata EU obbligatoria |
+Identificare in modo chirurgico i confini di mutamento garantisce di minimizzare gli impatti di codice durante questa evoluzione:
 
-### 7.3 Flusso Outbound Fase 2
+| Strato Architetturale | Fase 1 (MILOS) | Fase 2 (EFTI Nativo) | Impatto di Riscrittura |
+|---|---|---|---|
+| **Interfaccia ERP (Ingresso)** | Webhook JSON custom + REST | Webhook JSON custom + REST | Nessuno |
+| **Database Strutturale** | MariaDB Relazionale | MariaDB Relazionale | Nessuno |
+| **Autenticazione Gateway** | API Key in header (`Authorization`) | M2M OAuth2 Token (Redis Cache) + X.509 | Isolato nel `GatewaySelector` |
+| **Payload Esterno** | Classe `.NET` `ECMRRequest` custom | Dataset standardizzato EN 17532 | Sviluppo di un nuovo Mapping Service dedicato |
+| **QR Code / Ispezioni** | Generato remotamente da MILOS | Generato e firmato dall'EFTI Connector stesso | Richiede libreria dedicata + QES |
+| **GDPR & Autorità (Audit)** | Le Polizie Stradali interrogano MILOS | Il *Query Proxy Service* deve esporre API pubbliche traccianti | Esporre Endpoints Pubblici e log su DB |
 
-```
-1-3. [Identici alla Fase 1: Submit → Validate → Upsert/Map]
-                  ↓
-4. ENQUEUE    efti_messages (status=PENDING, gateway_provider=EFTI_NATIVE)
-                  ↓
-5. SEND       EftiNativeGateway:
-              · Recupera token OAuth2 da cache Redis (TTL 1h)
-              · Invia dataset EN 17532 via REST HTTPS o AS4
-              · EFTI Gate risponde: 202 Accepted + { messageId }
-                  ↓
-6. STORE      status → SENT; external_id = messageId EFTI
-                  ↓
-7. CONFIRM    EFTI invia callback asincrono con ACK finale
-                  ↓
-8. QUERY      Query Proxy Service risponde a query delle autorità
-              + audit log GDPR obbligatorio per ogni accesso
-                  ↓
-9. NOTIFY     Notification Service avvisa sorgente
-```
+### 7.4 Flusso Operativo della Transizione (Zero-Downtime)
 
-### 7.4 Gestione della Transizione Fase 1 → Fase 2
+La sostituzione del provider in linea di produzione è gestita in ottica *Circuit Toggle* (Feature Flag) accoppiata ad un rollout morbido in Kubernetes (k8s), per prevenire disservizi ai mezzi in parcheggio:
 
-La transizione è progettata per essere **zero-downtime** e **reversibile**:
-
-```
-1. Deploy nuova config: EftiGateway:Provider = "EftiNative"
-2. Kubernetes rolling update su EFTI Gateway Service
-3. I nuovi messaggi usano EftiNativeGateway
-4. I messaggi MILOS in volo completano il loro ciclo (SENT/ACK/DEAD)
-5. Se problemi → rollback config → ritorno immediato a MILOS
-6. MILOS rimane disponibile come fallback per il periodo di stabilizzazione
-```
+1. **Deployment Ombra:** Le classi `EftiNativeGateway` (il nuovo SDK) vengono deployate su tutti i pod logici dormienti (inattive).
+2. **Flag Flip:** Da pannello Admin (React UI), o alterando un `ConfigMap`, il flag applicativo `EftiGateway.Provider` muta da `"Milos"` a `"EftiNative"`.
+3. **Drain delle Code:** RabbitMQ instrada lecendosi nativamente i nuovi payload in ingresso alla nuova pipeline del mapper *EN 17532*.
+4. **Smaltimento Graceful:** I messaggi *in-volo* pendenti nella coda legata a MILOS vengono progressivamente processati in background senza venir abortiti malamente.
+5. **Fallback Safety:** Qualsiasi criticità di handshake Oauth2 o timeout AS4 sul nodo statale produce allarmi immediati (Prometheus/Serilog). È sufficiente deflaggare in UI l'hub statale per deviare nuovamente il fiume transazionale sul rassicurante backup MILOS in meno di un secondo.
 
 ---
 
-## 8. Frontend React — Funzionalità Principali
+## 8. Frontend React — Pannello di Gestione
 
-| Modulo | Funzionalità |
+Una Single Page Application (SPA) realizzata in **React 19 + TypeScript**, dotata di design system ergonomico per gli operatori logistici (Ant Design / MUI). 
+Il front-end funge da "torre di controllo" per esaminare in tempo reale il flusso B2B generato dagli ERP, intervenendo dove necessario e amministrando parametri di sistema.
+
+### 8.1 Struttura e Architettura UI
+
+| Modulo UI | Ruolo nel dominio |
 |---|---|
-| Form Trasporto | Inserimento e-CMR/e-DDT con selezione cliente per codice, autocomplete destinazioni |
-| Anagrafica Clienti | CRUD clienti, ricerca per codice/ragione sociale, lista `auto_created` da verificare |
-| Destinazioni Cliente | Lista destinazioni per cliente, form indirizzo, impostazione default |
-| Dashboard | Stato real-time messaggi (SSE), KPI, alerting, **badge fase attiva MILOS/EFTI** |
-| Elenco Messaggi | Griglia paginata, filtro per `gateway_provider` (MILOS / EFTI), export CSV |
-| Dettaglio Messaggio | Timeline stato, payload JSON, risposta gateway, storico retry, eCMRID/UUID MILOS |
-| Dead Letter Queue | Lista messaggi falliti, riprocessamento manuale, note operatore |
-| Gestione Sorgenti | CRUD sorgenti, configurazione webhook, rinnovo API key |
-| Audit Log | Ricerca log per entità/utente/periodo, export compliance |
-| Admin | Gestione utenti, RBAC, parametri sistema, **switch provider MILOS↔EFTI** |
+| **Vite & TS** | Bundler ultraveloce (HMR) e sicurezza al transpiling sui DTO di rete per eliminare "undefined is not a function". |
+| **Zustand + React Query** | Il client memorizza localmente lo stato dell'interfaccia (Zustand). I dati asincroni dalle API sono invece serviti, con caching a 5 min, da *TanStack React Query*. |
+| **SSE (Server-Sent Events)**| Mantengono *live* il cruscotto: un CMR che passa a "Errore" accende una spia rossa nello schermo dell'operatore senza bisogno di refresh della pagina (Polling). |
+| **Keycloak Auth** | Login centralizzato. Genera un Bearer Token per le restrizioni di Role-Based Access Control (es: utente "Viewer" vs "Admin"). |
 
-Il pannello Admin mostra chiaramente quale provider è attivo e permette il cambio senza deploy:
+### 8.2 Funzionalità Business
+
+- **Dashboard Real-Time**: KPI aggregati sui volumi della settimana, tassi di scarto MILOS, e un **Badge di status globale** ben visibile che chiarisce in quale fase (1 MILOS o 2 STATO) sta lavorando il Connector.
+- **Griglia Spedizioni (e-CMR)**: Elenca ogni operazione con filtri testuali rapidi per CMR id, P.Iva, Nazione e Targa del Trattore. Modalità di export nativo CSV o JSON.
+- **Operazioni Manuali (Form)**: Pensato come backup in caso di *down* dei gestionali interni. Strutturato tramite form dinamici e complessi (via *React Hook Form* & Zod object validation). Consente ad un umano di compilare graficamente e per intero una Lettera di Vettura e premere INVIA.
+- **Anagrafica Adattiva**: Specchio delle tabelle SQL `customers`. Presenta interruttori "Soft-Delete", moduli di sovrascrittura di un indirizzo di consegna (LOCODE) ed evidenzia chiaramente i record etichettati `<Auto-Created>` dai flussi notturni che meritano un check dell'operatore.
+- **Dead Letter Queue (I fallimenti)**: Un'infermeria dove finiscono i payload in coma (es: Partita IVA non formattata logicamente, superati i 6 tentativi automatici di Hangfire). L'utente può editare il JSON grezzo ed eseguire un riprocessamento manuale ("Re-Queue").
+
+### 8.3 Il Pannello Admin System
+
+Fondamentale per i DevOps e i manager tecnici. Oltre alla gestione delle API keys e la rotazione dei ruoli, contiene lo **Switch Bifasico**:
 
 ```
-┌──────────────────────────────────────┐
-│  Gateway EFTI — Provider attivo      │
-│   ○ MILOS TFP   ● EFTI Nativo        │
-│   Stato: ✓ Connesso · ping 2 min fa  │
-└──────────────────────────────────────┘
+┌───────────────────────────────────────────────┐
+│ ⚙️ Gestione Gateway EFTI — Ambiente di Prod   │
+│                                               │
+│    Provider attivo al momento:                │
+│    ○ MILOS Partner Com.   ● EFTI Nativo M2M   │
+│                                               │
+│   [Stato: ✓ Connesso]  · [Ping: 12ms]         │
+└───────────────────────────────────────────────┘
 ```
+L'interazione con questo switch richiama le API admin del *GatewaySelector* provocando in frazioni di secondo lo shift del routing dietro le quinte.
 
 ---
 
 ## 9. Sicurezza e Conformità Normativa
 
-### 9.1 Sicurezza Applicativa (entrambe le fasi)
+La natura istituzionale e "Legal Tech" della piattaforma EFTI richiede garanzie di sicurezza pari a quelle dei sistemi bancari. Sostituendo la lettera di vettura cartacea firmata a penna con dati puramente digitali, i rischi collegati a *tampering* (falsificazione di documenti di trasporto) e infrazioni GDPR risultano i driver primari dell'architettura di sicurezza.
 
-- OWASP Top 10: input sanitization, CSRF token, CSP headers, SQL parametrizzato
-- Secrets Management: HashiCorp Vault / Azure Key Vault, rotazione automatica
-- Zero Trust: mTLS tra microservizi in produzione (Istio)
-- Penetration test trimestrale + SAST/DAST integrato in CI/CD
+### 9.1 Identità, Autenticazione ed RBAC
 
-### 9.2 Specifico Fase 1 (MILOS)
+- **Autenticazione Macchina-Macchina (M2M):** Gli ERP sorgente non usano password umane, ma interagiscono con il *Connector API Gateway* avvalendosi di Json Web Token (JWT) rilasciati da Keycloak o tramite API Key con hashing forte (SHA-256) salvate su Vault.
+- **Micro-segmentazione e Zero-Trust:** Nel cluster Kubernetes di produzione, i microservizi dialogano esclusivamente tramite `mTLS` (Mutual TLS). Se un attore malevolo riuscisse a bucare l'interfaccia React, non potrebbe mai eseguire una query su MariaDB, poiché il DB accetta connessioni solo dai pod legittimati dalla PKI interna.
+- **Roles-Based Access Control (RBAC) granulare:** Nel Frontend React, i permessi di lettura JSON, sovrascrittura forzata (DLQ) o cambio Provider (MILOS ↔ Nativo) sono vincolati a scope specifici restituiti dagli *Access Token* OAuth2.
 
-- API Key MILOS in Vault, mai in codice o variabili d'ambiente
-- TLS 1.3 verso tutti gli endpoint MILOS
-- Hashcode SHA-256 obbligatorio su ogni payload `ECMRRequest` (`hashcodeDetails`)
+### 9.2 Protezione del Dato e Crittografia (Data-at-Rest & In-Flight)
 
-### 9.3 Specifico Fase 2 (EFTI Nativo)
+La confidenzialità commerciale (es: il costo di un trasporto, la tipologia di merce e l'identità del cliente finale) è vitale per le aziende logistiche.
 
-- Certificato X.509 da CA accreditata EU: storage in Key Vault, rinnovo automatico
-- Token OAuth2 `client_credentials` con TTL 1h, caching in Redis
-- mTLS per comunicazione AS4
-- eIDAS QES per firma documenti qualificati (eBL, eCMR)
-- MariaDB Data-at-Rest Encryption + AES\_ENCRYPT per colonne JSON critiche
+- **Fase 1 (MILOS):** Le comunicazioni avvengono tramite **TLS 1.3**. Per garantire l'integrità durante la trasmissione, l'SDK `.NET` calcola un Hash SHA-256 esatto dell'intero payload (`ECMRRequest`), allegandolo come `hashcodeDetails`. MILOS rispedisce errore se l'hash ricalcolato non combacia (prevenzione Man-In-The-Middle attacks).
+- **Fase 2 (EFTI Nativo - Imminente):** L'impianto crittografico scala verso gli standard governativi. 
+  - Archiviazione di **Certificati X.509 (Qualificati EU)** in Azure Key Vault / HashiCorp.
+  - Firma Elettronica Qualificata (QES) eIDAS per apporre il sigillo legale al pacchetto aziendale.
+  - Implementazione del rigido protocollo di messaggistica inter-nazionale **AS4 via eDelivery**, che assicura crittografia asimmetrica *End-to-End* fino al ministero competente.
+- **Storage Encryption:** Il Database transazionale prevede crittografia a riposo nativa sul volume disco. Per dati altamente sensibili, le colonne JSON in EF Core sono decifrate a runtime via funzioni `AES_DECRYPT()`.
 
-### 9.4 Compliance GDPR
+### 9.3 Conformità Legislativa EFTI e GDPR Audit Logging
 
-- Audit log immutabile per ogni accesso ai dati di trasporto (Art. 5 Reg. 2020/1056)
-- Data retention configurabile per sorgente con purging automatico
-- **Fase 1**: query delle autorità gestite da MILOS; audit interno traccia le sole azioni del Connector
-- **Fase 2**: Query Proxy Service implementa audit GDPR completo obbligatorio per ogni query
+Il Regolamento (UE) 2020/1056 impone che ogni accesso umano o di sistema ai dati logistici da parte di soggetti terzi avvenga in modo inequivocabilmente tracciabile.
+
+- **Pattern *Append-Only Audit Log*:** Le entità `users` e i sistemi sorgenti che operano un CRUD non cancellano né sovrascrivono i record transitati, ma inseriscono istruzioni nella tabella segregata `audit_logs` priva di trigger di `DELETE`.
+- **Interfaccia e Autorità di Controllo:** 
+  - *(Fase 1)*: Le autorità (es. agenti di stradale in ispezione) interrogano il nodo MILOS inserendo l'UUID del QR Code. MILOS si fa garante del tracciamento.
+  - *(Fase 2)*: Sarà il nostro *Query Proxy Service* a dover soddisfare le interrogazioni istituzionali per conto del cliente aziendale. Un middleware intercetta la Action API e obbliga ad applicare un Audit Entry, comprensivo di IP, Identificatore Agente e timestamp, prima di restituire il Payload del Documento Logistico.
+- **Data Lifecycle (Purging automatico):** Un job cron *Hangfire* anonimizza ed espunge permanentemente i record transattivi vecchi di *N* mesi (parametro GDPR aziendale configurabile per sorgente), lasciando solo aggregati statistici, sollevando l'azienda dai costi di Cloud Storage evitabili.
 
 ---
 
-## 10. Deployment e Scalabilità
+## 10. Deployment e Scalabilità Infrastrutturale
 
-- Ogni microservizio deployato come pod Kubernetes con HPA
-- **MariaDB**: Galera Cluster 3 nodi (replica sincrona multi-master)
-- **RabbitMQ**: cluster 3 nodi con quorum queues
-- **Redis**: Sentinel mode (1 master + 2 replica)
-- **NGINX Ingress** con cert-manager per TLS automatico
-- CI/CD: GitHub Actions / Azure DevOps — build, test, publish, deploy staging automatico
+In logistica, la documentazione è "Time-Critical": un camion che attende alla barriera doganale o al terminale portuale perché il Connector EFTI è irraggiungibile genera costi di demurrage e impatti drammatici. L'approccio al deployment è totalmente focalizzato sull'Alta Affidabilità (High Availability).
+
+### 10.1 Orchestrazione Kubernetes (K8S) e Microservizi
+
+L'intera applicazione *Backend Formatter* ed i *Poller* sono containerizzati tramite OCI / Docker immagini `alpine-distroless` (per minimizzare la superficie d'attacco e le vulnerabilità OS) e ospitati su un orchestratore Kubernetes.
+
+- **Horizontal Pod Autoscaling (HPA):** Sfruttando l'architettura Message-Driven di RabbitMQ, se l'API Gateway dovesse ricevere un Flood/Spike da 15.000 ordini simultanei (es: un ERP sversa tutti i viaggi notturni alle ore 06:00), il cluster k8s nota l'aumento dei pacchetti nel bus e invoca nuove repliche dinamiche dei vari Worker Service. 
+- **Graceful Shutdown & Readiness Probes:** Le *HealthCheck API* integrate in .NET 9 informano costantemente l'Ingress NGINX sullo stato del nodo. L'aggiornamento dell'applicazione avviene senza interruzione del servizio (Rolling Update).
+
+### 10.2 Storage e Middleware Clusterizzati
+
+Tutti gli ingranaggi fondamentali sono immuni al Single-Point-Of-Failure (SPOF):
+
+- **Data Tier Relazionale (MariaDB 11.4):** Eseguito in modalità *Galera Cluster* con architettura a 3 Nodi multi-master. Questo garantisce lock distribuiti sicuri e sincronizzazione garantita senza drift di dati, anche in caso di kernel panic di un nodo.
+- **Broker (RabbitMQ 3.13):** Cluster a 3 nodi in modalità `Quorum Queues` sfruttando il protocollo *Raft* per tollerare la caduta secca del leader, assicurando che l'evento critico `TransportValidatedEvent` non venga mai evaporato.
+- **Object Serialization Cache (Redis 7):** Operante in schema `Sentinel Mode` con un master e due repliche, necessario per distribuire i Rate Limiters multi-istanza e reggere migliaia di operazioni in millisecondi in fase di validazione del payload MILOS.
+
+### 10.3 Pipeline CI/CD Operativa (GitOps)
+
+Lo sviluppo procede in totale automazione in ottica "Push-to-Deploy":
+
+- **Continuous Integration:** Ad ogni pull-request su branch protetto, *GitHub Actions* o *Azure DevOps* provvede alla compilazione asincrona, esegue il linter automatico su React (`eslint/prettier`), fa correre i Test di Unità .NET, valuta la *Test Coverage*, e controlla che l'albero non includa CVE gravi su dipendenze NuGet o NPM.
+- **Continuous Deployment:** Se la CI passa, generano i tag semantici (es: `v2.2.14`). I manifesti Helm / Kustomize vengono automaticamente alterati sui cluster di Staging per simulazioni inter-modulari contro Sandbox MILOS.
+- **Prometheus & Grafana:** Metriche telemetriche come *Consumer Lag* (quanto tempo il bus è intasato) e tassi di errore sul Gateaway vengono esposte agli standard OpenTelemetry dai plugin interni, visualizzati da dashboard interattive.
 
 ---
 

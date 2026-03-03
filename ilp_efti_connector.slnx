@@ -2,9 +2,7 @@
   <Folder Name="/docs/">
     <File Path="docs/EFTI_Connector_Architecture_v2.md" />
     <File Path="docs/er-diagram.html" />
-    <File Path="docs/INFRASTRUCTURE.md" />
     <File Path="docs/MILOS TFP e-CMR - eFTI.pdf" />
-    <File Path="docs/SOLUTION_SETUP.md" />
   </Folder>
   <Folder Name="/src/">
     <File Path="avvio.txt" />

@@ -2,5 +2,8 @@
   "realm": "efti_connector",
   "users": [],
   "clients": [],
-  "roles": []
+  "roles": {
+    "realm": [],
+    "client": {}
+  }
 }

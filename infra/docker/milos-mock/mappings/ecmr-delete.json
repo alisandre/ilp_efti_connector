@@ -1,0 +1,11 @@
+{
+  "request": {
+    "method": "DELETE",
+    "urlPathPattern": "/api/ecmr-service/ecmr/.*"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "text/plain" },
+    "body": "OK"
+  }
+}

@@ -2,7 +2,7 @@
 
 > **Versione:** 1.1 · **Data:** Febbraio 2026
 > Guida passo-passo per creare la solution C# e tutti i progetti che la compongono.  
-> Da collocare nella root della solution: `SOLUTION_SETUP.md`
+> Repository: [github.com/alisandre/ilp_efti_connector](https://github.com/alisandre/ilp_efti_connector) · Branch: `main`
 
 ---
 
@@ -21,6 +21,15 @@
 ---
 
 ## 1. Creazione della Solution
+
+> **Nota:** la solution è già disponibile su GitHub. Per iniziare a lavorarci clona il repository:
+>
+> ```bash
+> git clone https://github.com/alisandre/ilp_efti_connector.git
+> cd ilp_efti_connector
+> ```
+>
+> Le istruzioni seguenti documentano come l’intera struttura è stata costruita da zero — utili per comprendere l’architettura o ricreare l’ambiente in un nuovo contesto.
 
 ```bash
 # Crea la cartella radice e la solution

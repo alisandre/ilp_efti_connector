@@ -1,11 +1,79 @@
-# 1. Avvia l'infrastruttura Docker (dalla root della solution)
+### Avvio rapido — Linux / macOS (Bash)
+
+# 1. Clona il repository
+git clone https://github.com/your-org/ilp-efti-connector.git
+cd ilp-efti-connector
+
+# 2. Copia le variabili d'ambiente
+cp infra/docker/.env.example infra/docker/.env
+# ⚠️  Edita .env con le tue configurazioni locali prima di procedere
+
+# 3. Avvia lo stack completo
+./scripts/dev-up.sh
+
+# oppure manualmente
+cd infra/docker
 docker compose up -d
 
-# 2. Attendi che i container siano healthy (~15s)
-docker compose ps
+# 4. Esegui le migrations del database
+./scripts/db-migrate.sh
 
-# 3. Applica le migration EF Core (prima volta o dopo nuove migration)
-dotnet ef database update --project src\Core\ilp_efti_connector.Infrastructure `
-                          --startup-project src\Services\ilp_efti_connector.ApiGateway
+# 5. Importa il realm Keycloak
+./scripts/keycloak-import.sh
 
-# 4. Avvia il progetto
+
+# ════════════════════════════════════════════════════════════════
+
+### Avvio rapido — Windows (PowerShell)
+
+# Prerequisiti: Docker Desktop installato e in esecuzione, Git, .NET SDK 9, dotnet-ef
+
+# 1. Clona il repository
+git clone https://github.com/your-org/ilp-efti-connector.git
+cd ilp-efti-connector
+
+# 2. Copia le variabili d'ambiente
+copy infra\docker\.env.example infra\docker\.env
+# ⚠️  Apri infra\docker\.env con un editor e modifica le password prima di procedere
+
+# 3. Avvia lo stack completo
+cd infra\docker
+docker compose --profile dev up -d --build
+cd ..\..
+
+# Servizi disponibili dopo l'avvio:
+#   MariaDB      -> localhost:3306
+#   RabbitMQ     -> http://localhost:15672  (efti_rabbit / changeme_rabbit)
+#   Redis        -> localhost:6379
+#   Keycloak     -> http://localhost:8080   (admin / changeme_kc)
+#   Seq (logs)   -> http://localhost:8888
+#   Grafana      -> http://localhost:3001   (admin / admin)
+#   Prometheus   -> http://localhost:9090
+#   MILOS Mock   -> http://localhost:9999
+
+# 4. Esegui le migrations del database
+#    Attendi che MariaDB sia healthy (~20s), poi:
+dotnet ef database update --project src\Shared\ilp_efti_connector.Shared.Infrastructure --startup-project src\Services\ilp_efti_connector.ApiGateway --connection "Server=localhost;Port=3306;Database=efti_connector;User=efti_user;Password=MariaDB@2026!;"
+
+# 5. Importa il realm Keycloak
+#    Keycloak importa il realm automaticamente all'avvio da infra\keycloak\realm-efti.json
+#    Verifica che il container sia healthy, poi apri: http://localhost:8080
+#
+#    Se occorre reimportare manualmente:
+docker exec ilp-efti-connector-keycloak /opt/keycloak/bin/kc.sh import --file /opt/keycloak/data/import/realm-efti.json
+
+
+# ── Comandi utili su Windows ─────────────────────────────────────
+
+# Stato dei container
+docker compose -f infra\docker\docker-compose.yml ps
+
+# Log in tempo reale di un servizio
+docker logs -f ilp-efti-connector-rabbitmq
+
+# Fermare lo stack
+cd infra\docker
+docker compose down
+
+# Fermare lo stack e rimuovere i volumi (reset completo)
+docker compose down -v

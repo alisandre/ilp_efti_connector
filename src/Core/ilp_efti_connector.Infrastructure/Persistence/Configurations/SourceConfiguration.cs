@@ -71,5 +71,27 @@ public class SourceConfiguration : IEntityTypeConfiguration<Source>
             .WithOne(m => m.Source)
             .HasForeignKey(m => m.SourceId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // Seed — sorgente di test per l'ambiente di sviluppo
+        builder.HasData(new Source
+        {
+            Id = new Guid("11111111-1111-1111-1111-111111111111"),
+            Code = "TMS_TEST",
+            Name = "Sorgente di Test",
+            Type = ilp_efti_connector.Domain.Enums.SourceType.TMS,
+            IsActive = true,
+            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
+
+        // Seed — sorgente di test per l'ambiente di sviluppo
+        builder.HasData(new Source
+        {
+            Id = new Guid("22222222-2222-2222-2222-222222222222"),
+            Code = "TEST_FRONTEND",
+            Name = "Form di test per inserimento",
+            Type = ilp_efti_connector.Domain.Enums.SourceType.MANUAL,
+            IsActive = true,
+            CreatedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
     }
 }

@@ -2,7 +2,7 @@
 
 > **Versione:** 1.1 · **Data:** Febbraio 2026  
 > Guida operativa per il provisioning dell'infrastruttura locale (dev) e di produzione.
-> Da collocare nella root della solution: `ilp_efti_connectorsln` → `INFRASTRUCTURE.md`
+> Repository: [github.com/alisandre/ilp_efti_connector](https://github.com/alisandre/ilp_efti_connector) · Branch: `main`
 
 ---
 
@@ -59,42 +59,42 @@ dotnet ef --version       # 9.0.x
 
 ```
 ilp_efti_connector/                         ← root della repository
-│
+│                                             https://github.com/alisandre/ilp_efti_connector
 ├── INFRASTRUCTURE.md                       ← questo file
-├── ilp_efti_connectorsln
+├── ilp_efti_connector.sln
 │
 ├── src/
 │   ├── Core/
-│   │   ├── ilp_efti_connector.Domain/
-│   │   ├── ilp_efti_connector.Application/
-│   │   └── ilp_efti_connector.Infrastructure/
+│   │   ├── ilp-efti-connector.Domain/
+│   │   ├── ilp-efti-connector.Application/
+│   │   └── ilp-efti-connector.Infrastructure/
 │   │
 │   ├── Gateway/
-│   │   ├── ilp_efti_connector.Gateway.Contracts/
-│   │   ├── ilp_efti_connector.Gateway.Milos/        ← Fase 1
-│   │   └── ilp_efti_connector.Gateway.EftiNative/   ← Fase 2
+│   │   ├── ilp-efti-connector.Gateway.Contracts/
+│   │   ├── ilp-efti-connector.Gateway.Milos/        ← Fase 1
+│   │   └── ilp-efti-connector.Gateway.EftiNative/   ← Fase 2
 │   │
 │   ├── Services/
-│   │   ├── ilp_efti_connectorApiGateway/
-│   │   ├── ilp_efti_connectorValidationService/
-│   │   ├── ilp_efti_connectorNormalizationService/
-│   │   ├── ilp_efti_connectorEftiGatewayService/
-│   │   ├── ilp_efti_connectorResponseHandlerService/
-│   │   ├── ilp_efti_connectorNotificationService/
-│   │   ├── ilp_efti_connectorQueryProxyService/
-│   │   ├── ilp_efti_connectorRetryService/
-│   │   └── ilp_efti_connectorFormInputService/
+│   │   ├── ilp-efti-connectorApiGateway/
+│   │   ├── ilp-efti-connectorValidationService/
+│   │   ├── ilp-efti-connectorNormalizationService/
+│   │   ├── ilp-efti-connectorEftiGatewayService/
+│   │   ├── ilp-efti-connectorResponseHandlerService/
+│   │   ├── ilp-efti-connectorNotificationService/
+│   │   ├── ilp-efti-connectorQueryProxyService/
+│   │   ├── ilp-efti-connectorRetryService/
+│   │   └── ilp-efti-connectorFormInputService/
 │   │
 │   └── Shared/
-│       ├── ilp_efti_connector.Shared.Contracts/
-│       └── ilp_efti_connector.Shared.Infrastructure/
+│       ├── ilp-efti-connector.Shared.Contracts/
+│       └── ilp-efti-connector.Shared.Infrastructure/
 │
 ├── tests/
-│   ├── ilp_efti_connector.Domain.Tests/
-│   ├── ilp_efti_connector.Application.Tests/
-│   ├── ilp_efti_connector.Gateway.Milos.Tests/
-│   ├── ilp_efti_connector.Gateway.EftiNative.Tests/
-│   └── ilp_efti_connectorIntegrationTests/
+│   ├── ilp-efti-connector.Domain.Tests/
+│   ├── ilp-efti-connector.Application.Tests/
+│   ├── ilp-efti-connector.Gateway.Milos.Tests/
+│   ├── ilp-efti-connector.Gateway.EftiNative.Tests/
+│   └── ilp-efti-connectorIntegrationTests/
 │
 ├── frontend/                               ← React SPA
 │   └── efti-connector-ui/
@@ -148,11 +148,11 @@ ilp_efti_connector/                         ← root della repository
 
 ## 3. Ambiente di Sviluppo Locale (Docker Compose)
 
-### Avvio rapido
+### Avvio rapido — Linux / macOS (Bash)
 
 ```bash
 # 1. Clona il repository
-git clone https://github.com/your-org/ilp_efti_connector.git
+git clone https://github.com/alisandre/ilp_efti_connector.git
 cd ilp_efti_connector
 
 # 2. Copia le variabili d'ambiente
@@ -172,6 +172,74 @@ docker compose up -d
 # 5. Importa il realm Keycloak
 ./scripts/keycloak-import.sh
 ```
+
+### Avvio rapido — Windows (PowerShell)
+
+> **Prerequisiti:** Docker Desktop installato e in esecuzione, Git, .NET SDK 9.0, `dotnet-ef` (`dotnet tool install -g dotnet-ef`)
+
+```powershell
+# 1. Clona il repository
+git clone https://github.com/alisandre/ilp_efti_connector.git
+cd ilp_efti_connector
+
+# 2. Copia le variabili d'ambiente
+copy infra\docker\.env.example infra\docker\.env
+# ⚠️  Apri infra\docker\.env con un editor e modifica le password prima di procedere
+
+# 3. Avvia lo stack completo
+cd infra\docker
+docker compose --profile dev up -d --build
+cd ..\..
+
+# Servizi disponibili dopo l'avvio:
+#   MariaDB      → localhost:3306
+#   RabbitMQ     → http://localhost:15672  (efti_rabbit / changeme_rabbit)
+#   Redis        → localhost:6379
+#   Keycloak     → http://localhost:8080   (admin / changeme_kc)
+#   Seq (logs)   → http://localhost:8888
+#   Grafana      → http://localhost:3001   (admin / admin)
+#   Prometheus   → http://localhost:9090
+#   MILOS Mock   → http://localhost:9999
+
+# 4. Esegui le migrations del database
+#    Attendi che MariaDB sia healthy (~20s), poi:
+dotnet ef database update `
+  --project src\Shared\ilp_efti_connector.Shared.Infrastructure `
+  --startup-project src\Services\ilp_efti_connector.ApiGateway `
+  --connection "Server=localhost;Port=3306;Database=efti_connector;User=efti_user;Password=MariaDB@2026!;"
+
+# 5. Importa il realm Keycloak
+#    Il realm viene importato automaticamente all'avvio del container da infra\keycloak\realm-efti.json
+#    Admin console: http://localhost:8080  (admin / changeme_kc)
+#
+#    Se occorre reimportare manualmente:
+docker exec ilp-efti-connector-keycloak /opt/keycloak/bin/kc.sh import --file /opt/keycloak/data/import/realm-efti.json
+```
+
+#### Comandi utili su Windows
+
+```powershell
+# Stato dei container
+docker compose -f infra\docker\docker-compose.yml ps
+
+# Log in tempo reale di un servizio
+docker logs -f efti-rabbitmq
+
+# Fermare lo stack
+cd infra\docker
+docker compose down
+
+# Fermare lo stack e rimuovere i volumi (reset completo)
+docker compose down -v
+```
+
+#### Troubleshooting Windows
+
+| Errore | Causa | Soluzione |
+|---|---|---|
+| `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified` | Docker Desktop non è avviato o è in modalità **Windows containers** | 1. Avvia Docker Desktop e attendi l'icona stabile nella system tray. 2. Tasto destro sull'icona → **Switch to Linux containers** |
+| `the attribute 'version' is obsolete` | Compose v2 non usa più il campo `version` | Warning innocuo; il campo è già stato rimosso da `docker-compose.yml` |
+| `port is already allocated` | Una porta (es. 3306, 5672) è già occupata da un altro processo | `netstat -ano \| findstr :<porta>` per trovare il PID, poi terminarlo da Task Manager |
 
 ### File `infra/docker/.env.example`
 
@@ -519,18 +587,18 @@ FLUSH PRIVILEGES;
 # Aggiunge una nuova migration
 dotnet ef migrations add <NomeMigration> \
   --project src/Shared/ilp_efti_connector.Shared.Infrastructure \
-  --startup-project src/Services/ilp_efti_connectorApiGateway \
+  --startup-project src/Services/ilp-efti-connectorApiGateway \
   --output-dir Migrations
 
 # Applica tutte le migrations pendenti
 dotnet ef database update \
   --project src/Shared/ilp_efti_connector.Shared.Infrastructure \
-  --startup-project src/Services/ilp_efti_connectorApiGateway
+  --startup-project src/Services/ilp_efti_connector.ApiGateway
 
 # Script SQL da applicare manualmente (produzione)
 dotnet ef migrations script \
   --project src/Shared/ilp_efti_connector.Shared.Infrastructure \
-  --startup-project src/Services/ilp_efti_connectorApiGateway \
+  --startup-project src/Services/ilp_efti_connector.ApiGateway \
   --output migrations.sql \
   --idempotent
 ```
@@ -542,14 +610,14 @@ dotnet ef migrations script \
 set -euo pipefail
 
 echo "▶ Attendo MariaDB..."
-until docker exec efti-mariadb mariadb-admin ping -u root -p"${MARIADB_ROOT_PASSWORD:-changeme_root}" --silent; do
+until docker exec ilp-efti-connector-mariadb mariadb-admin ping -u root -p"${MARIADB_ROOT_PASSWORD:-changeme_root}" --silent; do
   sleep 2
 done
 
 echo "▶ Eseguo EF Core migrations..."
 dotnet ef database update \
-  --project src/Shared/ilp_efti_connector.Shared.Infrastructure \
-  --startup-project src/Services/ilp_efti_connectorApiGateway \
+  --project src/Shared/ilp-efti-connector.Shared.Infrastructure \
+  --startup-project src/Services/ilp-efti-connectorApiGateway \
   --connection "Server=localhost;Port=3306;Database=efti_connector;User=efti_user;Password=changeme_efti;"
 
 echo "✅ Migrations completate."
@@ -755,14 +823,14 @@ echo "✅ Keycloak pronto — il realm 'efti' viene importato automaticamente al
 echo "   Admin console: http://localhost:8080  (admin / changeme_kc)"
 echo ""
 echo "   Se serve reimportare manualmente:"
-echo "   docker exec efti-keycloak /opt/keycloak/bin/kc.sh import --file /opt/keycloak/data/import/realm-efti.json"
+echo "   docker exec ilp-efti-connector-keycloak /opt/keycloak/bin/kc.sh import --file /opt/keycloak/data/import/realm-efti.json"
 ```
 
 ---
 
 ## 9. API Gateway — YARP
 
-### Progetto `ilp_efti_connectorApiGateway`
+### Progetto `ilp-efti-connectorApiGateway`
 
 ```csharp
 // Program.cs
@@ -833,7 +901,7 @@ builder.Host.UseSerilog((ctx, lc) => lc
     .Enrich.FromLogContext()
     .Enrich.WithMachineName()
     .Enrich.WithEnvironmentName()
-    .Enrich.WithProperty("Service", "ilp_efti_connectorValidationService")
+    .Enrich.WithProperty("Service", "ilp-efti-connectorValidationService")
     .WriteTo.Console(new JsonFormatter())
     .WriteTo.Seq(ctx.Configuration["Seq:ServerUrl"]!));
 ```
@@ -920,7 +988,7 @@ builder.Services.AddOpenTelemetry()
         metrics.AddAspNetCoreInstrumentation();
         metrics.AddHttpClientInstrumentation();
         metrics.AddRuntimeInstrumentation();
-        metrics.AddMeter("ilp_efti_connector*");
+        metrics.AddMeter("ilp-efti-connector*");
         metrics.AddPrometheusExporter();
     })
     .WithTracing(tracing =>
@@ -948,7 +1016,7 @@ public class IlpEftiMetrics
 
     public IlpEftiMetrics(IMeterFactory meterFactory)
     {
-        var meter = meterFactory.Create("ilp_efti_connector.Gateway");
+        var meter = meterFactory.Create("ilp-efti-connector.Gateway");
         _messagesSent         = meter.CreateCounter<long>("efti.messages.sent");
         _messagesAcknowledged = meter.CreateCounter<long>("efti.messages.acknowledged");
         _messagesFailed       = meter.CreateCounter<long>("efti.messages.failed");
@@ -1135,7 +1203,7 @@ on:
 env:
   DOTNET_VERSION: "9.0.x"
   REGISTRY: ghcr.io
-  IMAGE_PREFIX: ${{ github.repository_owner }}/ilp_efti_connector
+  IMAGE_PREFIX: alisandre/ilp_efti_connector
 
 jobs:
   build-and-test:
@@ -1180,7 +1248,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Unit Tests
-        run: dotnet test tests/ilp_efti_connector.Domain.Tests tests/ilp_efti_connector.Application.Tests \
+        run: dotnet test tests/ilp-efti-connector.Domain.Tests tests/ilp-efti-connector.Application.Tests \
                --no-build --configuration Release --logger trx --results-directory TestResults
 
       - name: Integration Tests
@@ -1188,7 +1256,7 @@ jobs:
           ConnectionStrings__DefaultConnection: "Server=localhost;Port=3306;Database=efti_test;User=efti_test;Password=test_pass;"
           RabbitMQ__Host: localhost
           Redis__ConnectionString: "localhost:6379"
-        run: dotnet test tests/ilp_efti_connectorIntegrationTests \
+        run: dotnet test tests/ilp-efti-connectorIntegrationTests \
                --no-build --configuration Release --logger trx --results-directory TestResults
 
       - name: Publish Test Results
@@ -1257,20 +1325,20 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 
 # Copia solution e csproj per layer caching
-COPY ilp_efti_connectorsln .
-COPY src/Core/ilp_efti_connector.Domain/ilp_efti_connector.Domain.csproj                   src/Core/ilp_efti_connector.Domain/
-COPY src/Core/ilp_efti_connector.Application/ilp_efti_connector.Application.csproj         src/Core/ilp_efti_connector.Application/
-COPY src/Shared/ilp_efti_connector.Shared.Contracts/ilp_efti_connector.Shared.Contracts.csproj src/Shared/ilp_efti_connector.Shared.Contracts/
-COPY src/Shared/ilp_efti_connector.Shared.Infrastructure/ilp_efti_connector.Shared.Infrastructure.csproj src/Shared/ilp_efti_connector.Shared.Infrastructure/
-COPY src/Gateway/ilp_efti_connector.Gateway.Contracts/ilp_efti_connector.Gateway.Contracts.csproj src/Gateway/ilp_efti_connector.Gateway.Contracts/
-COPY src/Gateway/ilp_efti_connector.Gateway.Milos/ilp_efti_connector.Gateway.Milos.csproj src/Gateway/ilp_efti_connector.Gateway.Milos/
-COPY src/Gateway/ilp_efti_connector.Gateway.EftiNative/ilp_efti_connector.Gateway.EftiNative.csproj src/Gateway/ilp_efti_connector.Gateway.EftiNative/
-COPY src/Services/ilp_efti_connectorEftiGatewayService/ilp_efti_connectorEftiGatewayService.csproj src/Services/ilp_efti_connectorEftiGatewayService/
+COPY ilp-efti-connectorsln .
+COPY src/Core/ilp-efti-connector.Domain/ilp-efti-connector.Domain.csproj                   src/Core/ilp-efti-connector.Domain/
+COPY src/Core/ilp-efti-connector.Application/ilp-efti-connector.Application.csproj         src/Core/ilp-efti-connector.Application/
+COPY src/Shared/ilp-efti-connector.Shared.Contracts/ilp-efti-connector.Shared.Contracts.csproj src/Shared/ilp-efti-connector.Shared.Contracts/
+COPY src/Shared/ilp-efti-connector.Shared.Infrastructure/ilp-efti-connector.Shared.Infrastructure.csproj src/Shared/ilp-efti-connector.Shared.Infrastructure/
+COPY src/Gateway/ilp-efti-connector.Gateway.Contracts/ilp-efti-connector.Gateway.Contracts.csproj src/Gateway/ilp-efti-connector.Gateway.Contracts/
+COPY src/Gateway/ilp-efti-connector.Gateway.Milos/ilp-efti-connector.Gateway.Milos.csproj src/Gateway/ilp-efti-connector.Gateway.Milos/
+COPY src/Gateway/ilp-efti-connector.Gateway.EftiNative/ilp-efti-connector.Gateway.EftiNative.csproj src/Gateway/ilp-efti-connector.Gateway.EftiNative/
+COPY src/Services/ilp-efti-connectorEftiGatewayService/ilp-efti-connectorEftiGatewayService.csproj src/Services/ilp-efti-connectorEftiGatewayService/
 
-RUN dotnet restore src/Services/ilp_efti_connectorEftiGatewayService/ilp_efti_connectorEftiGatewayService.csproj
+RUN dotnet restore src/Services/ilp-efti-connectorEftiGatewayService/ilp-efti-connectorEftiGatewayService.csproj
 
 COPY . .
-RUN dotnet publish src/Services/ilp_efti_connectorEftiGatewayService \
+RUN dotnet publish src/Services/ilp-efti-connectorEftiGatewayService \
     -c Release -o /app/publish --no-restore
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime
@@ -1279,7 +1347,7 @@ EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 
 COPY --from=build /app/publish .
-ENTRYPOINT ["dotnet", "ilp_efti_connectorEftiGatewayService.dll"]
+ENTRYPOINT ["dotnet", "ilp-efti-connectorEftiGatewayService.dll"]
 ```
 
 ---
@@ -1308,7 +1376,7 @@ metadata:
 
 ```yaml
 global:
-  imageRegistry: ghcr.io/your-org/ilp_efti_connector
+  imageRegistry: ghcr.io/alisandre/ilp_efti_connector
   imageTag: latest
   imagePullPolicy: Always
 
@@ -1469,14 +1537,14 @@ kubectl create secret tls efti-x509-cert \
 
 ```bash
 # Inizializza User Secrets per il progetto di startup
-dotnet user-secrets init --project src/Services/ilp_efti_connectorApiGateway
+dotnet user-secrets init --project src/Services/ilp-efti-connectorApiGateway
 
 # Imposta i secrets
 dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Server=localhost;..." \
-  --project src/Services/ilp_efti_connectorApiGateway
+  --project src/Services/ilp-efti-connectorApiGateway
 
 dotnet user-secrets set "EftiGateway:Milos:ApiKey" "your-api-key" \
-  --project src/Services/ilp_efti_connectorEftiGatewayService
+  --project src/Services/ilp-efti-connectorEftiGatewayService
 ```
 
 ---
@@ -1553,10 +1621,10 @@ kubectl rollout restart deployment/efti-eftigatewayservice -n efti-production
 
 # ── Gestione DLQ ─────────────────────────────────────────────
 # Visualizza messaggi in coda dead letter
-docker exec efti-rabbitmq rabbitmqadmin list queues name messages
+docker exec ilp-efti-connector-rabbitmq rabbitmqadmin list queues name messages
 
 # Svuota DLQ (ATTENZIONE: messaggi persi)
-docker exec efti-rabbitmq rabbitmqadmin purge queue name=dead.letter
+docker exec ilp-efti-connector-rabbitmq rabbitmqadmin purge queue name=dead.letter
 
 # ── Switch provider MILOS → EFTI Native (produzione) ─────────
 helm upgrade efti-connector infra/k8s/helm/efti-connector \
@@ -1567,7 +1635,7 @@ helm upgrade efti-connector infra/k8s/helm/efti-connector \
 helm rollback efti-connector --namespace efti-production
 
 # ── Backup database ──────────────────────────────────────────
-docker exec efti-mariadb mariadb-dump \
+docker exec ilp-efti-connector-mariadb mariadb-dump \
   -u root -p"${MARIADB_ROOT_PASSWORD}" \
   --all-databases > backup-$(date +%Y%m%d-%H%M%S).sql
 

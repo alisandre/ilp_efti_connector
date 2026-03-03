@@ -1,0 +1,18 @@
+{
+  "request": {
+    "method": "POST",
+    "urlPath": "/api/ecmr-service/ecmr"
+  },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "eCMRID": "MOCK-{{randomValue type='UUID'}}",
+      "uuid":   "{{randomValue type='UUID'}}",
+      "consignorSender": {
+        "name": "Mock Mittente S.r.l."
+      }
+    },
+    "transformers": ["response-template"]
+  }
+}
