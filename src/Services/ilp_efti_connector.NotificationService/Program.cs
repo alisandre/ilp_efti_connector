@@ -6,8 +6,7 @@ var builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.AddHttpClient("WebhookClient")
-    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10));
+builder.Services.AddHttpClient("WebhookClient").ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10));
 
 builder.Services.AddIlpEftiMessaging(builder.Configuration, x =>
 {

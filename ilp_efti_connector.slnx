@@ -4,6 +4,26 @@
     <File Path="docs/er-diagram.html" />
     <File Path="docs/MILOS TFP e-CMR - eFTI.pdf" />
   </Folder>
+  <Folder Name="/infra/" />
+  <Folder Name="/infra/docker/">
+    <File Path="infra/docker/.env" />
+    <File Path="infra/docker/.env.example" />
+    <File Path="infra/docker/docker-compose.yml" />
+    <File Path="infra/docker/Dockerfile" />
+  </Folder>
+  <Folder Name="/infra/docker/keycloak/">
+    <File Path="infra/keycloak/realm-efti_connector.json" />
+  </Folder>
+  <Folder Name="/infra/docker/mariadb/" />
+  <Folder Name="/infra/docker/mariadb/init/">
+    <File Path="infra/mariadb/init/init.sql" />
+  </Folder>
+  <Folder Name="/infra/docker/milos-mock/" />
+  <Folder Name="/infra/docker/milos-mock/mappings/">
+    <File Path="infra/docker/milos-mock/mappings/ecmr-create.json" />
+    <File Path="infra/docker/milos-mock/mappings/ecmr-delete.json" />
+    <File Path="infra/docker/milos-mock/mappings/ecmr-update.json" />
+  </Folder>
   <Folder Name="/src/" />
   <Folder Name="/src/Core/">
     <Project Path="src/Core/ilp_efti_connector.Application/ilp_efti_connector.Application.csproj" />

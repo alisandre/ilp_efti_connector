@@ -15,6 +15,7 @@
 - [5. Architettura a Microservizi](#5-architettura-a-microservizi)
   - [5.1 Macro-Flusso dei Componenti](#51-macro-flusso-dei-componenti)
   - [5.2 Ciclo di Vita degli Stati — TransportOperation](#52-ciclo-di-vita-degli-stati--transportoperation)
+  - [5.3 Percorso Completo di una Richiesta — Dal Frontend al Gateway MILOS e Ritorno](#53-percorso-completo-di-una-richiesta--dal-frontend-al-gateway-milos-e-ritorno)
 - [6. Fase 1 — Integrazione con MILOS TFP](#6-fase-1--integrazione-con-milos-tfp)
 - [7. Fase 2 — Integrazione Diretta con EFTI](#7-fase-2--integrazione-diretta-con-efti)
 - [8. Frontend React](#8-frontend-react)
@@ -192,7 +193,7 @@ erDiagram
 
     transport_consignment_items ||--o{ transport_packages : "contains N packages"
 
-    %% Security & Audit
+    %% Security & Audit[Ilp Efti Connector](C:/Users/aless.HP-CU/Desktop/ilp_efti_connector.pdf)
     users ||--o{ transport_operations : "creates manually"
     users ||--o{ audit_logs : "performs actions"
 ```
@@ -210,9 +211,12 @@ Anagrafica dei mittenti principali (spesso i clienti dell'azienda che installa i
 | `business_name` | `VARCHAR(300)` | NOT NULL | Ragione sociale del mittente |
 | `vat_number` | `VARCHAR(50)` | | Partita IVA / VAT number |
 | `eori_code` | `VARCHAR(20)` | | Codice EORI (obbligatorio in EFTI per tratte cross-border) |
-| `is_active` | `BOOLEAN` | DEFAULT true | Soft delete /abilitazione |
+| `contact_email` | `VARCHAR(255)` | | Email di contatto del cliente |
+| `is_active` | `BOOLEAN` | DEFAULT true | Soft delete / abilitazione |
 | `auto_created` | `BOOLEAN` | DEFAULT false | `true` = creato automaticamente da un payload in corsa, nessuna validazione umana |
-| `source_id` | `CHAR(36)` | FK `sources` | Sorgente che ha generato la creazione automatica |
+| `source_id` | `CHAR(36)` | FK `sources` SET NULL | Sorgente che ha generato la creazione automatica |
+| `created_at` | `DATETIME` | NOT NULL | Timestamp creazione record |
+| `updated_at` | `DATETIME` | NOT NULL | Timestamp ultima modifica |
 
 ### 4.2 Tabella: `customer_destinations`
 
@@ -223,10 +227,17 @@ Indirizzi di scarico e terminal associati a un `customer` specifico. Si auto-pop
 | `id` | `CHAR(36)` | PK | UUID interno |
 | `customer_id` | `CHAR(36)` | FK `customers` NOT NULL | Cliente proprietario |
 | `destination_code` | `VARCHAR(100)` | UNIQUE NOT NULL | Codice destinazione dal sorgente |
+| `label` | `VARCHAR(200)` | | Etichetta leggibile della destinazione (es. "Magazzino Nord") |
 | `address_line1` | `VARCHAR(300)` | NOT NULL | Via e numero civico |
-| `city` | `VARCHAR(200)` | NOT NULL | Città e `country_code` (ISO 3166-1 alpha-2) |
+| `city` | `VARCHAR(200)` | NOT NULL | Città |
+| `postal_code` | `VARCHAR(20)` | | CAP |
+| `province` | `VARCHAR(100)` | | Provincia / stato |
+| `country_code` | `CHAR(2)` | NOT NULL | ISO 3166-1 alpha-2 (es. `IT`, `DE`) |
 | `un_locode` | `VARCHAR(10)` | | Codice UN/LOCODE (fondamentale per le direttive marittime e ferrovia) |
 | `is_default` | `BOOLEAN` | DEFAULT false | Usata per fallback form UI |
+| `auto_created` | `BOOLEAN` | DEFAULT false | `true` = creata automaticamente dal payload in transito |
+| `created_at` | `DATETIME` | NOT NULL | Timestamp creazione record |
+| `updated_at` | `DATETIME` | NOT NULL | Timestamp ultima modifica |
 
 **Logica di Upsert Anagrafico Intelligente** (Avviene al volo, pre-invio):
 1. Cerca il record `WHERE customer_code = :code`.
@@ -241,9 +252,12 @@ I sistemi che parlano con il Connector. Ognuno ha una API Key dedicata (hashata)
 |---|---|---|---|
 | `id` | `CHAR(36)` | PK | Identificatore univoco |
 | `code` | `VARCHAR(50)` | UNIQUE NOT NULL | Es. `TMS_MAGAZZINO_A`, `ERP_SAP_FINANCE` |
+| `name` | `VARCHAR(200)` | NOT NULL | Nome descrittivo della sorgente (es. "Gestionale Magazzino A") |
 | `type` | `VARCHAR(20)` | NOT NULL | Enum: `TMS` \| `WMS` \| `ERP` \| `MANUAL` (Front-end) |
 | `api_key_hash` | `VARCHAR(64)` | | Hash SHA-256 della API key Bearer usata |
+| `is_active` | `BOOLEAN` | DEFAULT true | Abilita / disabilita la sorgente senza cancellarla |
 | `config_json` | `JSON` | | Configurazione flessibile per custom Webhook payload URLs di ritorno |
+| `created_at` | `DATETIME` | NOT NULL | Timestamp creazione record |
 
 ### 4.4 Tabella: `transport_operations`
 
@@ -252,11 +266,19 @@ I sistemi che parlano con il Connector. Ognuno ha una API Key dedicata (hashata)
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
 | `id` | `CHAR(36)` | PK | UUID operazione logistica |
+| `source_id` | `CHAR(36)` | FK `sources` RESTRICT NOT NULL | Sorgente che ha originato l'operazione |
+| `customer_id` | `CHAR(36)` | FK `customers` RESTRICT NOT NULL | Mittente della spedizione |
+| `destination_id` | `CHAR(36)` | FK `customer_destinations` SET NULL | Destinazione di scarico |
 | `operation_code` | `VARCHAR(100)` | NOT NULL INDEXED | Codice univoco CMR/DDT (spesso `eCMRID` per MILOS) |
 | `dataset_type` | `VARCHAR(50)` | NOT NULL | `ECMR` (Strada) \| `EDDT` (DDT interno) |
 | `status` | `VARCHAR(30)` | NOT NULL | `DRAFT`, `VALIDATED`, `SENDING`, `SENT`, `ERROR`, ecc. |
-| `hashcode` | `VARCHAR(64)` | | Hash SHA-256 matematico del payload (richiesto per fini legali e non modificabilità) |
-| `raw_payload_json` | `JSON` | | Fotografia del JSON originale prima delle normalizzazioni (utile in caso di dispute e debug) |
+| `hashcode` | `VARCHAR(64)` | | Hash SHA-256 matematico del payload |
+| `hashcode_algorithm` | `VARCHAR(20)` | | Algoritmo usato (es. `SHA-256`) |
+| `raw_payload_json` | `JSON` | | Fotografia del JSON originale prima delle normalizzazioni |
+| `created_at` | `DATETIME` | NOT NULL | Timestamp creazione record |
+| `updated_at` | `DATETIME` | NOT NULL | Timestamp ultima modifica |
+| `created_by_user_id` | `CHAR(36)` | FK `users` SET NULL | Utente che ha creato l'operazione (null se automatica) |
+| `updated_by_user_id` | `CHAR(36)` | FK `users` SET NULL | Utente che ha effettuato l'ultima modifica |
 
 ### 4.5 Tabella: `efti_messages`
 
@@ -264,11 +286,22 @@ Tabella che traccia i *tentativi fisici* di comunicazione verso il nodo di stato
 
 | Colonna | Tipo | Vincolo | Descrizione |
 |---|---|---|---|
+| `id` | `CHAR(36)` | PK | UUID del messaggio |
+| `source_id` | `CHAR(36)` | FK `sources` RESTRICT NOT NULL | Sorgente originante |
+| `transport_operation_id` | `CHAR(36)` | FK `transport_operations` CASCADE NOT NULL | Operazione di trasporto associata |
+| `correlation_id` | `CHAR(36)` | NOT NULL INDEXED | ID di correlazione cross-service propagato da `ApiGateway` |
 | `gateway_provider` | `VARCHAR(20)` | NOT NULL | `MILOS` \| `EFTI_NATIVE` |
 | `direction` | `VARCHAR(10)` | NOT NULL | `INBOUND` \| `OUTBOUND` |
-| `status` | `VARCHAR(20)` | NOT NULL INDEXED | `PENDING`, `ACKNOWLEDGED`, `RETRY`, `DEAD` |
-| `external_id` | `VARCHAR(100)` | INDEXED | F1: `eCMRID` da MILOS — F2: `UUID/MessageId` di stato EFTI |
-| `retry_count` | `SMALLINT` | DEFAULT 0 | Fondamentale per backoff asincrono (Hangfire) |
+| `dataset_type` | `VARCHAR(50)` | NOT NULL | `ECMR` \| `EDDT` |
+| `status` | `VARCHAR(20)` | NOT NULL INDEXED | `PENDING`, `SENT`, `ERROR`, `RETRY`, `DEAD` |
+| `payload_json` | `JSON` | NOT NULL | Snapshot dell'`EcmrPayload` al momento dell'invio |
+| `external_id` | `VARCHAR(100)` | INDEXED | F1: `eCMRID` da MILOS — F2: `MessageId` di stato EFTI |
+| `external_uuid` | `VARCHAR(100)` | | UUID interno MILOS / UUID documento EFTI Gate |
+| `retry_count` | `SMALLINT` | DEFAULT 0 | Contatore tentativi per backoff esponenziale |
+| `next_retry_at` | `DATETIME` | INDEXED | Timestamp pianificato per il prossimo retry (`RetryService`) |
+| `sent_at` | `DATETIME` | | Timestamp dell'invio avvenuto con successo |
+| `acknowledged_at` | `DATETIME` | | Timestamp ACK definitivo ricevuto (Fase 2) |
+| `created_at` | `DATETIME` | NOT NULL INDEXED | Timestamp creazione record |
 
 ### 4.6 — 4.10 Tabelle `transport_*` minori (Normalizzazione Payload)
 
@@ -364,6 +397,535 @@ Ogni `TransportOperation` genera almeno un `EftiMessage` che tiene traccia dei *
 | `ERROR` | `EftiGatewayService` | Deserializzazione payload fallita |
 | `RETRY` | `ResponseHandlerService` | Risposta negativa, `retry_count < MAX_RETRY` (default 3) |
 | `DEAD` | `ResponseHandlerService` | `retry_count >= MAX_RETRY` — messaggio finisce in DLQ |
+
+---
+
+## 5.3 Percorso Completo di una Richiesta — Dal Frontend al Gateway MILOS e Ritorno
+
+Questa sezione descrive con precisione tecnica l'intero ciclo di vita di una singola operazione di trasporto: dall'interazione dell'operatore sulla SPA React fino alla risposta ricevuta da MILOS TFP e alla notifica di ritorno al sistema sorgente. Ogni hop è dettagliato con le librerie coinvolte, i punti di ingresso e uscita e le strutture dati scambiate.
+
+---
+
+### Fase A — Ingresso dalla SPA React (`FormInputService` / `ApiGateway`)
+
+**Librerie coinvolte:** `React 19`, `React Hook Form`, `Zod`, `@react-keycloak/web`, `TanStack React Query`, `Axios` / `fetch`
+
+#### A.1 — Autenticazione utente (Keycloak PKCE)
+
+Prima di qualsiasi operazione, l'operatore si autentica attraverso il flusso **Authorization Code + PKCE** di Keycloak. La libreria `@react-keycloak/web` gestisce questo flusso in modo trasparente:
+
+1. All'avvio della SPA, `KeycloakProvider` (in `keycloak.ts`) inizializza l'istanza Keycloak puntando a `http://localhost:8080/realms/efti_connector` con client `efti-form-frontend`.
+2. Se la sessione non è attiva, Keycloak redirige l'utente alla login page, che valida credenziali contro il realm `efti_connector`.
+3. Al login completato, Keycloak emette un **JWT Bearer Token** (Access Token) firmato con RS256, contenente i claim `sub`, `preferred_username`, `realm_access.roles` (es. `efti-operator`).
+4. Il token è memorizzato in memoria dal provider Keycloak e **non** in `localStorage` per prevenire attacchi XSS.
+5. `@react-keycloak/web` gestisce automaticamente il **refresh silenzioso** del token (via iframe hidden) prima della scadenza.
+
+#### A.2 — Validazione form e costruzione del payload
+
+Il form di compilazione eCMR usa **React Hook Form** integrato con uno schema **Zod**. Prima di qualsiasi chiamata HTTP:
+
+1. L'operatore compila i campi (OperationCode, CustomerCode, Carriers, Consignee, ecc.).
+2. `useForm<SourcePayloadDto>({ resolver: zodResolver(schema) })` valida ogni campo in tempo reale.
+3. Alla pressione di "Invia", `handleSubmit` invoca la mutation di **TanStack React Query** (`useMutation`).
+
+#### A.3 — Chiamata HTTP in uscita dal frontend
+
+**Punto di uscita frontend:** `POST http://localhost:5052/api/transport-operations`
+
+```
+Headers:
+  Authorization:  Bearer <JWT_ACCESS_TOKEN>       ← token Keycloak RS256
+  X-Source-Id:    <sourceId UUID>                  ← identifica il sistema sorgente
+  Content-Type:   application/json
+
+Body: SourcePayloadDto (JSON)
+  {
+    "operationCode": "CMR-2026-00123",
+    "datasetType":   "ECMR",
+    "customerCode":  "ACME_SPA",
+    "customerName":  "Acme SpA",
+    "customerVat":   "IT12345678901",
+    ...
+    "consignee": { ... },
+    "carriers":  [{ "tractorPlate": "AB123CD", ... }],
+    ...
+  }
+```
+
+---
+
+### Fase B — Ricezione e inoltro asincrono (`ApiGateway`)
+
+**Progetto:** `ilp_efti_connector.ApiGateway` — ASP.NET Core Web API, porta `5052`  
+**Librerie coinvolte:** `ASP.NET Core 9`, `Microsoft.AspNetCore.Authentication.JwtBearer`, `MassTransit`, `System.Text.Json`
+
+#### B.1 — Pipeline middleware ASP.NET Core
+
+La richiesta HTTP entra nella pipeline di ASP.NET Core nell'ordine seguente:
+
+```
+HttpRequest
+  │
+  ├── [1] Kestrel (TLS termination, HTTP/1.1 o HTTP/2)
+  ├── [2] Routing Middleware  →  match: POST /api/transport-operations
+  ├── [3] Authentication Middleware  →  AddJwtBearer (via AddIlpEftiAuth)
+  │         • Authority:  http://localhost:8080/realms/efti_connector
+  │         • Audience:   "efti-api"
+  │         • Recupera JWKS pubblico da Keycloak (cached in memoria)
+  │         • Valida firma RS256, exp, iss, aud del JWT
+  │         • Popola HttpContext.User con ClaimsPrincipal
+  ├── [4] Authorization Middleware  →  [Authorize] su TransportOperationsController
+  │         • Verifica che HttpContext.User sia autenticato
+  └── [5] Controller Action  →  CreateTransportOperation(...)
+```
+
+**`AddIlpEftiAuth`** (in `AuthExtensions.cs`) configura `JwtBearerDefaults.AuthenticationScheme` con `TokenValidationParameters` che include `ValidateAudience` (configurabile per ambiente). In Development è impostato a `false` finché il mapper audience Keycloak non è attivo.
+
+#### B.2 — Action `CreateTransportOperation`
+
+**Punto di ingresso backend:** `TransportOperationsController.CreateTransportOperation`
+
+```csharp
+// Ingresso: SourcePayloadDto dal body + Guid sourceId dall'header X-Source-Id
+var operationId   = Guid.NewGuid();   // UUID univoco dell'operazione
+var correlationId = Guid.NewGuid().ToString();  // ID di correlazione cross-service (Serilog)
+```
+
+L'action non persiste nulla su database: il suo unico compito è **disaccoppiare** la richiesta sincrona dell'ERP dalla pipeline asincrona. Costruisce e pubblica immediatamente il messaggio su RabbitMQ:
+
+```csharp
+await _publish.Publish(new TransportSubmittedEvent(
+    TransportOperationId: operationId,
+    SourceId:             sourceId,
+    CorrelationId:        correlationId,
+    RawPayloadJson:       JsonSerializer.Serialize(payload),   // snapshot immutabile
+    DatasetType:          payload.DatasetType,
+    SubmittedAt:          DateTime.UtcNow), ct);
+```
+
+**Punto di uscita ApiGateway:** `HTTP 202 Accepted` con body `TransportOperationSubmitResponse(operationId, correlationId, "PENDING_VALIDATION")`. La risposta è sincrona e immediata: il client ottiene subito il `correlationId` per tracciare lo stato.
+
+#### B.3 — Pubblicazione su RabbitMQ via MassTransit
+
+`_publish` è un'istanza di `IPublishEndpoint` iniettata da MassTransit. La chiamata `Publish<TransportSubmittedEvent>()` esegue:
+
+1. **Serializzazione JSON** del messaggio con `System.Text.Json` (serializer di default MassTransit).
+2. **Creazione dell'exchange** in RabbitMQ: `TransportSubmittedEvent` → exchange fanout `ilp-efti-connector:shared-contracts:events:transport-submitted-event` (naming convention MassTransit kebab-case).
+3. **Routing** verso tutte le code bound all'exchange (in questo caso la coda del `ValidationService`).
+4. Il messaggio include gli **header MassTransit** (`messageId`, `correlationId`, `sentTime`, `messageType`).
+
+---
+
+### Fase C — Validazione del payload (`ValidationService`)
+
+**Progetto:** `ilp_efti_connector.ValidationService` — .NET Worker Service  
+**Librerie coinvolte:** `MassTransit`, `System.Text.Json`
+
+#### C.1 — Ricezione del messaggio da RabbitMQ
+
+**Punto di ingresso:** `TransportSubmittedConsumer.Consume(ConsumeContext<TransportSubmittedEvent>)`
+
+MassTransit (tramite `cfg.ConfigureEndpoints(ctx)` in `MessagingExtensions.cs`) crea automaticamente:
+- Una **coda durabile** `ilp-efti-connector-validation-service_transport-submitted` in RabbitMQ.
+- Il binding tra l'exchange `TransportSubmittedEvent` e questa coda.
+
+Quando un messaggio arriva, MassTransit:
+1. Deserializza il body JSON in `TransportSubmittedEvent`.
+2. Crea un **DI scope** (scoped lifetime) e risolve `TransportSubmittedConsumer` dal container.
+3. Chiama `Consume(context)` in un thread pool thread (il consumer è concorrente per default).
+
+#### C.2 — Logica di validazione
+
+Il consumer deserializza il `RawPayloadJson` in `SourcePayloadDto` e controlla:
+
+- Presenza e formato di `OperationCode`, `DatasetType`, `CustomerCode`, `CustomerName`.
+- Presenza di almeno un vettore (`Carriers`) con `TractorPlate`.
+- Presenza di `Consignee`.
+
+Se la validazione fallisce, pubblica `TransportValidationFailedEvent` (→ gestito da `ResponseHandlerService`).
+
+#### C.3 — Pubblicazione `TransportValidatedEvent`
+
+**Punto di uscita:** `IPublishEndpoint.Publish<TransportValidatedEvent>()` → exchange RabbitMQ `transport-validated-event`
+
+```
+TransportValidatedEvent {
+  TransportOperationId, SourceId, CorrelationId,
+  RawPayloadJson,       DatasetType, ValidatedAt
+}
+```
+
+---
+
+### Fase D — Normalizzazione e persistenza (`NormalizationService`)
+
+**Progetto:** `ilp_efti_connector.NormalizationService` — .NET Worker Service  
+**Librerie coinvolte:** `MassTransit`, `MediatR`, `Entity Framework Core 9`, `Pomelo.EntityFrameworkCore.MySql`, `System.Text.Json`
+
+#### D.1 — Ricezione da RabbitMQ
+
+**Punto di ingresso:** `TransportValidatedConsumer.Consume(ConsumeContext<TransportValidatedEvent>)`
+
+La coda RabbitMQ `ilp-efti-connector-normalization-service_transport-validated` riceve il messaggio. MassTransit lo deserializza e risolve il consumer dal DI scope.
+
+#### D.2 — Upsert anagrafico via MediatR
+
+Il consumer non accede direttamente all'infrastruttura: **delega via MediatR** per mantenere la separazione tra Application e Infrastructure layer.
+
+```csharp
+// 1. Upsert cliente/destinazione
+var upsertResult = await _mediator.Send(
+    SourcePayloadMapper.ToUpsertCustomerCommand(dto, evt.SourceId), ct);
+// → UpsertCustomerCommandHandler → EF Core → MariaDB
+//   INSERT/UPDATE su tabelle 'customers' e 'customer_destinations'
+//   con flag auto_created=true se inserimento automatico
+```
+
+**`AuditBehaviour<TRequest,TResponse>`** (MediatR pipeline behavior) intercetta il comando prima dell'handler: verifica che implementi `IAuditableCommand`, scrive un record `audit_logs` con `old_value_json` / `new_value_json` tramite `IAuditLogRepository`. Questo comportamento è registrato in `AddApplicationServices()` e si applica trasparentemente a ogni comando MediatR.
+
+#### D.3 — Costruzione `EcmrPayload` e scelta del provider
+
+```csharp
+// 2. Determina il provider dal config (appsettings → "EftiGateway:Provider")
+var providerStr    = _config["EftiGateway:Provider"] ?? "MILOS";
+var gatewayProvider = Enum.TryParse<GatewayProvider>(providerStr, ...) ? gp : GatewayProvider.MILOS;
+
+// 3. Costruisce EcmrPayload (modello interno normalizzato)
+var ecmrPayload     = SourcePayloadMapper.ToEcmrPayload(dto, ...);
+var ecmrPayloadJson = JsonSerializer.Serialize(ecmrPayload, JsonOptions);
+```
+
+#### D.4 — Creazione `TransportOperation` + `EftiMessage` via MediatR
+
+```csharp
+// 4. Persiste l'operazione e il messaggio sul DB
+var submitResult = await _mediator.Send(new SubmitTransportOperationCommand { ... }, ct);
+// → SubmitTransportOperationCommandHandler:
+//   - DuplicateOperationCodeException se operation_code già esistente (idempotenza)
+//   - INSERT su transport_operations con Status = VALIDATED
+//   - INSERT su transport_consignees, transport_carriers, transport_details, ...
+//   - INSERT su efti_messages con Status = PENDING, GatewayProvider = MILOS
+//   - IUnitOfWork.SaveChangesAsync() → singola transazione MariaDB
+```
+
+#### D.5 — Pubblicazione `EftiSendRequestedEvent`
+
+**Punto di uscita NormalizationService:** `IPublishEndpoint.Publish<EftiSendRequestedEvent>()`
+
+```
+EftiSendRequestedEvent {
+  EftiMessageId,        TransportOperationId, CorrelationId,
+  GatewayProvider:      "MILOS",
+  PayloadJson:          <EcmrPayload serializzato>,
+  DatasetType:          "ECMR"
+}
+```
+
+---
+
+### Fase E — Invio al gateway MILOS (`EftiGatewayService`)
+
+**Progetto:** `ilp_efti_connector.EftiGatewayService` — .NET Worker Service  
+**Librerie coinvolte:** `MassTransit`, `Refit 7`, `Polly v8`, `System.Text.Json`, `System.Security.Cryptography`
+
+#### E.1 — Ricezione da RabbitMQ
+
+**Punto di ingresso:** `EftiSendRequestedConsumer.Consume(ConsumeContext<EftiSendRequestedEvent>)`
+
+La coda `ilp-efti-connector-efti-gateway-service_efti-send-requested` riceve il messaggio. Prima della chiamata HTTP, il consumer aggiorna lo stato dell'operazione in DB:
+
+```csharp
+operation.Status    = TransportOperationStatus.SENDING;   // stato transitorio anti-duplicazione
+operation.UpdatedAt = DateTime.UtcNow;
+_operations.Update(operation);
+await _uow.SaveChangesAsync(ct);   // flush immediato → MariaDB
+```
+
+#### E.2 — Selezione del gateway via `GatewaySelector`
+
+```csharp
+var gateway = _selector.Get(gatewayProvider);   // gatewayProvider = "MILOS"
+```
+
+`GatewaySelector` è registrato come `AddScoped<GatewaySelector>()` in `Program.cs`. Internamente risolve `IEnumerable<IEftiGateway>` dal DI container e seleziona l'implementazione corrispondente al provider richiesto:
+
+- `"MILOS"` → `MilosTfpGateway` (registrata da `AddMilosGateway()`)
+- `"EFTI_NATIVE"` → `EftiNativeGateway` (registrata da `AddEftiNativeGateway()`)
+
+#### E.3 — Stack HTTP verso MILOS: catena dei `DelegatingHandler`
+
+La chiamata `gateway.SendEcmrAsync(payload, ct)` entra nello stack HTTP di `HttpClient` costruito da `IHttpClientFactory`. Gli handler sono applicati nell'ordine di registrazione in `MilosGatewayExtensions.cs`:
+
+```
+MilosTfpGateway.SendEcmrAsync()
+  │
+  ▼
+IMilosEcmrClient.CreateEcmrAsync()          ← interfaccia Refit
+  │   (generata automaticamente a runtime da Refit)
+  ▼
+[Handler 1] GatewayResilienceHandler         ← DelegatingHandler (Polly v8)
+  │   Pipeline: Retry → Circuit Breaker → Timeout
+  │   • Retry: max 3 tentativi, exponential backoff (1s, 2s, 4s) + jitter
+  │             scatta su HttpRequestException o HTTP 5xx
+  │   • Circuit Breaker: si apre dopo failure_ratio ≥ 50% su 5+ richieste in 30s
+  │                       rimane aperto per 30s (BrokenCircuitException)
+  │   • Timeout: 30 secondi per singola richiesta
+  ▼
+[Handler 2] MilosApiKeyHandler               ← DelegatingHandler
+  │   • Aggiunge header: X-API-Key: <valore da MilosGatewayOptions.ApiKey>
+  │   • ApiKey letta da IOptions<MilosGatewayOptions> (sezione "EftiGateway:Milos")
+  ▼
+HttpClientHandler (Kestrel / SocketsHttpHandler)
+  │   • TLS 1.3 verso MILOS
+  │   • BaseAddress: https://<milos-sandbox>/api/ecmr-service/
+  ▼
+RETE → MILOS TFP: POST /ecmr
+```
+
+#### E.4 — Preparazione del payload MILOS (prima dell'invio HTTP)
+
+In `MilosTfpGateway.SendEcmrAsync()`, prima di delegare a Refit:
+
+```csharp
+// 1. Mapping: EcmrPayload (interno) → ECMRRequest (contratto MILOS)
+var request = EcmrPayloadToMilosMapper.Map(payload);
+//    Traduce campo per campo: consignorSender, consignee, carriers[],
+//    includedConsignmentItems, transportDetails.incoterms, ...
+
+// 2. Hash di integrità SHA-256 (richiesto da MILOS per anti-tampering)
+request.HashcodeDetails = MilosHashcodeCalculator.Compute(request);
+//    • Serializza ECMRRequest in JSON camelCase senza il campo hashcodeDetails
+//    • SHA256.HashData(UTF8 bytes) → hex lowercase
+//    • Allega come { "json": "<hash>", "algorithm": "SHA-256" }
+```
+
+**Punto di uscita EftiGatewayService → MILOS:**
+
+```
+POST https://<milos-sandbox>/api/ecmr-service/ecmr
+Headers:
+  X-API-Key:    <api-key>
+  Content-Type: application/json
+Body: ECMRRequest (JSON camelCase)
+  {
+    "shipping":   { "eCMRID": "CMR-2026-00123", ... },
+    "consignorSender": { "vatNumber": "IT12345678901", ... },
+    "consignee":       { ... },
+    "carriers":        [{ "tractorPlate": "AB123CD", ... }],
+    "hashcodeDetails": { "json": "a3f1...", "algorithm": "SHA-256" }
+  }
+```
+
+---
+
+### Fase F — Risposta MILOS e gestione esito (`EftiGatewayService` → `ResponseHandlerService`)
+
+#### F.1 — Risposta HTTP da MILOS
+
+MILOS risponde con:
+
+| Scenario | HTTP Status | Body |
+|---|---|---|
+| **Successo** | `200 OK` | `{ "eCMRID": "CMR-2026-00123", "uuid": "550e8400-..." }` |
+| **Dati non validi** | `400 Bad Request` | messaggio di errore (es. P.IVA malformata) |
+| **Autenticazione** | `401 Unauthorized` | → `GatewayAuthenticationException` |
+| **Timeout / 5xx** | — | → Polly attiva i retry esponenziali (fino a 3 volte) |
+
+#### F.2 — Gestione in `MilosTfpGateway`
+
+```csharp
+if (!response.IsSuccessStatusCode || response.Content is null)
+    return HandleErrorResponse(response.StatusCode, error);   // EftiSendResult.Failure(...)
+
+return EftiSendResult.Success(
+    response.Content.ECMRId,    // eCMRID assegnato da MILOS
+    response.Content.Uuid,      // UUID interno MILOS
+    (int)response.StatusCode);
+```
+
+#### F.3 — Aggiornamento DB e pubblicazione `EftiResponseReceivedEvent`
+
+Tornato in `EftiSendRequestedConsumer.SendToGatewayAsync()`:
+
+```csharp
+// Aggiorna EftiMessage
+message.SentAt       = DateTime.UtcNow;
+message.Status       = result.IsSuccess ? MessageStatus.SENT : MessageStatus.ERROR;
+message.ExternalId   = result.ExternalId;    // eCMRID MILOS
+message.ExternalUuid = result.ExternalUuid;  // UUID MILOS
+_messages.Update(message);
+await _uow.SaveChangesAsync(ct);
+```
+
+**Punto di uscita EftiGatewayService:** `IPublishEndpoint.Publish<EftiResponseReceivedEvent>()`
+
+```
+EftiResponseReceivedEvent {
+  EftiMessageId, TransportOperationId, CorrelationId,
+  GatewayProvider: "MILOS",
+  IsSuccess:       true / false,
+  ExternalId:      "CMR-2026-00123",
+  ExternalUuid:    "550e8400-...",
+  ErrorMessage:    null / "...",
+  ReceivedAt:      DateTime.UtcNow
+}
+```
+
+---
+
+### Fase G — Gestione della risposta e logica di retry (`ResponseHandlerService`)
+
+**Progetto:** `ilp_efti_connector.ResponseHandlerService` — .NET Worker Service  
+**Librerie coinvolte:** `MassTransit`, `Entity Framework Core 9`
+
+**Punto di ingresso:** `EftiResponseReceivedConsumer.Consume(ConsumeContext<EftiResponseReceivedEvent>)`
+
+Il consumer implementa la **macchina a stati** di `EftiMessage`:
+
+| `IsSuccess` | `RetryCount` | Nuovo stato `EftiMessage` | Stato `TransportOperation` | Azione |
+|---|---|---|---|---|
+| `true` | — | `SENT` | `SENT` | Pubblica `SourceNotificationRequiredEvent` |
+| `false` | `< 3` | `RETRY` | invariato | Calcola `NextRetryAt = UtcNow + 2^RetryCount` minuti; pubblica `SourceNotificationRequiredEvent` solo su DEAD |
+| `false` | `>= 3` | `DEAD` | `ERROR` | Pubblica `SourceNotificationRequiredEvent`; il messaggio finisce in DLQ |
+
+```csharp
+// Backoff esponenziale calcolato in memoria (RetryService userà NextRetryAt)
+message.NextRetryAt = DateTime.UtcNow.AddMinutes(Math.Pow(2, message.RetryCount));
+// RetryCount=1 → +2 min · RetryCount=2 → +4 min · RetryCount=3 → DEAD
+```
+
+**Punto di uscita ResponseHandlerService:** `IPublishEndpoint.Publish<SourceNotificationRequiredEvent>()` (solo se `SENT` o `DEAD`)
+
+---
+
+### Fase H — Notifica al sistema sorgente (`NotificationService`)
+
+**Progetto:** `ilp_efti_connector.NotificationService` — .NET Worker Service  
+**Librerie coinvolte:** `MassTransit`, `IHttpClientFactory`, `System.Text.Json`
+
+**Punto di ingresso:** `SourceNotificationConsumer.Consume(ConsumeContext<SourceNotificationRequiredEvent>)`
+
+Il consumer:
+1. Carica la `Source` dal DB per ottenere `ConfigJson` (configurazione webhook personalizzata per ogni sistema sorgente).
+2. Estrae il `webhookUrl` da `ConfigJson`.
+3. Costruisce `EftiMessageStatusDto` con lo stato finale, `ExternalId` (eCMRID MILOS), `ExternalUuid`.
+4. Usa `IHttpClientFactory.CreateClient("WebhookClient")` per eseguire una `POST` HTTP verso il webhook dell'ERP/TMS sorgente.
+
+**Punto di uscita finale:**
+
+```
+POST <webhookUrl configurato nella Source>
+Headers:  Content-Type: application/json
+Body: EftiMessageStatusDto
+  {
+    "eftiMessageId":        "...",
+    "transportOperationId": "...",
+    "status":               "SENT",
+    "gatewayProvider":      "MILOS",
+    "externalId":           "CMR-2026-00123",
+    "externalUuid":         "550e8400-...",
+    "sentAt":               "2026-02-15T10:30:45Z",
+    ...
+  }
+```
+
+L'ERP sorgente (o la SPA React che fa polling su `GET /api/query/transport-operations/{id}/status`) riceve la conferma che il documento eCMR è stato accettato da MILOS e il QR Code è disponibile.
+
+---
+
+### Mappa visuale completa del flusso
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  SPA React (porta 5173)                                                                      │
+│  React Hook Form + Zod → useMutation (React Query)                                          │
+│  @react-keycloak/web → Bearer JWT RS256 in Authorization header                             │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ POST /api/transport-operations  (HTTP/TLS)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  ApiGateway (porta 5052)  —  ASP.NET Core 9                                                 │
+│  JwtBearer Middleware → valida JWT su JWKS Keycloak                                         │
+│  [Authorize] → ClaimsPrincipal                                                              │
+│  TransportOperationsController.CreateTransportOperation()                                    │
+│  IPublishEndpoint.Publish<TransportSubmittedEvent>()  ←  MassTransit                       │
+│  return HTTP 202 Accepted                                                                    │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ exchange: transport-submitted-event  (RabbitMQ AMQP)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  ValidationService  —  .NET Worker                                                           │
+│  TransportSubmittedConsumer  →  validazione SourcePayloadDto                                │
+│  IPublishEndpoint.Publish<TransportValidatedEvent>()                                         │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ exchange: transport-validated-event  (RabbitMQ AMQP)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  NormalizationService  —  .NET Worker                                                        │
+│  TransportValidatedConsumer                                                                  │
+│  ├── MediatR.Send(UpsertCustomerCommand)                                                     │
+│  │     └── AuditBehaviour → audit_logs   ──→  EF Core 9 + Pomelo → MariaDB                 │
+│  ├── MediatR.Send(SubmitTransportOperationCommand)                                           │
+│  │     └── INSERT transport_operations (VALIDATED) + efti_messages (PENDING) → MariaDB     │
+│  ├── EcmrPayloadToMilosMapper.ToEcmrPayload()  (modello interno)                            │
+│  └── IPublishEndpoint.Publish<EftiSendRequestedEvent>()                                      │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ exchange: efti-send-requested-event  (RabbitMQ AMQP)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  EftiGatewayService  —  .NET Worker                                                          │
+│  EftiSendRequestedConsumer                                                                   │
+│  ├── UPDATE transport_operations → SENDING  (MariaDB)                                       │
+│  ├── GatewaySelector.Get("MILOS")  →  MilosTfpGateway                                      │
+│  ├── EcmrPayloadToMilosMapper.Map()  →  ECMRRequest                                         │
+│  ├── MilosHashcodeCalculator.Compute()  →  SHA-256 hash                                     │
+│  └── IMilosEcmrClient.CreateEcmrAsync()  (Refit)                                            │
+│        └─ GatewayResilienceHandler (Polly v8)                                               │
+│             ├── RetryStrategy: 3× exponential backoff (1s·2s·4s) + jitter                   │
+│             ├── CircuitBreaker: open dopo 50% failure in 30s, pause 30s                     │
+│             └── Timeout: 30s                                                                 │
+│        └─ MilosApiKeyHandler  →  aggiunge X-API-Key header                                  │
+│        └─ SocketsHttpHandler  →  TLS 1.3                                                    │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ HTTPS  POST /ecmr  (ECMRRequest + SHA-256 hash)
+                   ▼
+         ┌─────────────────┐
+         │  MILOS TFP API  │   → risposta: { eCMRID, uuid }
+         └────────┬────────┘
+                  │ HTTP 200 OK / 400 / 5xx
+                  ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  EftiGatewayService  (prosegue)                                                              │
+│  ├── UPDATE efti_messages → SENT / ERROR  +  ExternalId = eCMRID  (MariaDB)                │
+│  └── IPublishEndpoint.Publish<EftiResponseReceivedEvent>()                                   │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ exchange: efti-response-received-event  (RabbitMQ AMQP)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  ResponseHandlerService  —  .NET Worker                                                      │
+│  EftiResponseReceivedConsumer                                                                │
+│  ├── IsSuccess=true  → SENT  → UPDATE transport_operations + efti_messages  (MariaDB)       │
+│  ├── IsSuccess=false + retry_count < 3  → RETRY  + NextRetryAt (backoff 2^n min)            │
+│  ├── IsSuccess=false + retry_count ≥ 3  → DEAD  → ERROR  (DLQ)                             │
+│  └── IPublishEndpoint.Publish<SourceNotificationRequiredEvent>()  (se SENT o DEAD)          │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ exchange: source-notification-required-event  (RabbitMQ AMQP)
+                   ▼
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│  NotificationService  —  .NET Worker                                                         │
+│  SourceNotificationConsumer                                                                  │
+│  ├── ISourceRepository.GetByIdAsync()  →  legge ConfigJson/webhookUrl  (MariaDB)            │
+│  ├── costruisce EftiMessageStatusDto  { status, externalId, externalUuid, ... }             │
+│  └── IHttpClientFactory.CreateClient("WebhookClient").PostAsync(webhookUrl, dto)            │
+└──────────────────┬───────────────────────────────────────────────────────────────────────────┘
+                   │ HTTP POST <webhookUrl ERP sorgente>
+                   ▼
+         ┌────────────────────────────────┐
+         │  ERP / TMS / SPA React polling  │  ← "SENT" + eCMRID + UUID MILOS
+         └────────────────────────────────┘
+```
+
+> **Nota:** Il `CorrelationId` generato dall'`ApiGateway` al passo B.2 viene propagato come header Serilog `X-Correlation-ID` attraverso ogni servizio grazie a `CorrelationIdMiddleware`. Questo consente, in Seq, di filtrare con `CorrelationId = "abc-123"` e ricostruire l'intero percorso di una singola operazione attraverso tutti e sei i microservizi.
 
 ---
 
@@ -1439,7 +2001,8 @@ openssl x509 -in certs/efti-client.crt -noout -dates
 
 ---
 
-*EFTI Connector Platform — Documentazione Architetturale v2.2 — Febbraio 2026*  
+*EFTI Connector Platform — Documentazione Architetturale v2.3 — Febbraio 2026*  
+*Sezione 4 aggiornata: tabelle allineate allo schema EF Core reale (colonne mancanti aggiunte: contact_email, timestamps, label, postal_code, province, auto_created, destination_id FK, hashcode_algorithm, created_by/updated_by, source_id, correlation_id, payload_json, external_uuid, next_retry_at, sent_at, acknowledged_at)*  
 *Sezione 5.1 corretta: stato iniziale VALIDATED (non DRAFT/SENDING)*
 *Sezione 5.2 aggiunta: Ciclo di Vita degli Stati TransportOperation — tabella, note su PENDING_VALIDATION, diagramma Mermaid, tabella EftiMessage*
 *Sezione 5 aggiornata: GatewayResilienceHandler (Polly v8), GatewayHealthMonitor, Query Proxy Service endpoint AuditLog*  
