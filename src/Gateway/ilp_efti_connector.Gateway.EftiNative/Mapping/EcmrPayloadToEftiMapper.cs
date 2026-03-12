@@ -10,11 +10,29 @@ namespace ilp_efti_connector.Gateway.EftiNative.Mapping;
 /// </summary>
 public static class EcmrPayloadToEftiMapper
 {
-    public static EftiEcmrDataset Map(EcmrPayload payload)
+    /// <summary>
+    /// Converte un <see cref="EcmrPayload"/> in <see cref="EftiEcmrDataset"/>.
+    /// </summary>
+    /// <param name="payload">Modello interno da convertire.</param>
+    /// <param name="countryCode">
+    /// Codice paese ISO 3166-1 (es. IT). Se fornito insieme a <paramref name="platformId"/>,
+    /// genera l'UID nel formato <c>CC.PlatformId.DatasetType.OperationCode</c>.
+    /// </param>
+    /// <param name="platformId">
+    /// Identificatore della piattaforma TFP (es. EFTI_CONNECTOR).
+    /// </param>
+    public static EftiEcmrDataset Map(
+        EcmrPayload payload,
+        string?     countryCode = null,
+        string?     platformId  = null)
     {
+        var uid = countryCode is not null && platformId is not null
+            ? EftiUidGenerator.Generate(countryCode, platformId, payload.DatasetType, payload.OperationCode)
+            : payload.OperationCode;
+
         return new EftiEcmrDataset
         {
-            Id            = payload.OperationCode,
+            Id            = uid,
             TypeCode      = payload.DatasetType,
             IssueDateTime = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
 

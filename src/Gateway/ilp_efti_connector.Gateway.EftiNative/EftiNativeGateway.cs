@@ -4,6 +4,7 @@ using ilp_efti_connector.Gateway.Contracts.Models;
 using ilp_efti_connector.Gateway.EftiNative.Client;
 using ilp_efti_connector.Gateway.EftiNative.Mapping;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Net;
 
@@ -19,17 +20,22 @@ public sealed class EftiNativeGateway : IEftiGateway
     private const string ProviderName = "EFTI_NATIVE";
 
     private readonly IEftiGateClient _client;
+    private readonly EftiNativeOptions _options;
     private readonly ILogger<EftiNativeGateway> _logger;
 
-    public EftiNativeGateway(IEftiGateClient client, ILogger<EftiNativeGateway> logger)
+    public EftiNativeGateway(
+        IEftiGateClient client,
+        IOptions<EftiNativeOptions> options,
+        ILogger<EftiNativeGateway> logger)
     {
-        _client = client;
-        _logger = logger;
+        _client  = client;
+        _options = options.Value;
+        _logger  = logger;
     }
 
     public async Task<EftiSendResult> SendEcmrAsync(EcmrPayload payload, CancellationToken ct = default)
     {
-        var dataset = EcmrPayloadToEftiMapper.Map(payload);
+        var dataset = EcmrPayloadToEftiMapper.Map(payload, _options.CountryCode, _options.PlatformId);
         _logger.LogDebug("EFTI_NATIVE SendEcmr → Id={Id}", payload.OperationCode);
 
         var response = await _client.CreateDatasetAsync(dataset, ct);
@@ -47,7 +53,7 @@ public sealed class EftiNativeGateway : IEftiGateway
 
     public async Task<EftiSendResult> UpdateEcmrAsync(string externalId, EcmrPayload payload, CancellationToken ct = default)
     {
-        var dataset = EcmrPayloadToEftiMapper.Map(payload);
+        var dataset = EcmrPayloadToEftiMapper.Map(payload, _options.CountryCode, _options.PlatformId);
         _logger.LogDebug("EFTI_NATIVE UpdateEcmr → Id={Id}", externalId);
 
         var response = await _client.UpdateDatasetAsync(externalId, dataset, ct);

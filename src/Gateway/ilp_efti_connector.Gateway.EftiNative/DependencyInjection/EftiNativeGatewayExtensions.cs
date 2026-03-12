@@ -7,8 +7,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Refit;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EftiCertLoader = ilp_efti_connector.Gateway.EftiNative.Auth.X509CertificateLoader;
 
 namespace ilp_efti_connector.Gateway.EftiNative.DependencyInjection;
 
@@ -21,7 +23,13 @@ public static class EftiNativeGatewayExtensions
     };
 
     /// <summary>
-    /// Registra il gateway EFTI Nativo (Fase 2): Refit client, OAuth2 handler, token cache Redis.
+    /// Registra il gateway EFTI Nativo (Fase 2):
+    /// <list type="bullet">
+    ///   <item>Refit client con mTLS configurato sull'HttpClientHandler</item>
+    ///   <item>OAuth2 handler con supporto client_assertion JWT (RFC 7523)</item>
+    ///   <item>Token cache Redis</item>
+    ///   <item>Pipeline Polly (retry + circuit breaker + timeout)</item>
+    /// </list>
     /// Richiede la sezione <c>EftiGateway:EftiNative</c> in appsettings.json.
     /// </summary>
     public static IServiceCollection AddEftiNativeGateway(
@@ -42,7 +50,10 @@ public static class EftiNativeGatewayExtensions
             client.Timeout = TimeSpan.FromSeconds(opts.TimeoutSeconds);
         });
 
-        // Refit client principale verso EFTI Gate (con OAuth2 handler)
+        // Refit client principale verso EFTI Gate
+        // - HttpClientHandler configurato con certificato X.509 per mutual TLS
+        // - GatewayResilienceHandler (Polly v8: retry + CB + timeout)
+        // - EftiOAuth2Handler (Bearer token + client_assertion JWT)
         services
             .AddRefitClient<IEftiGateClient>(new RefitSettings
             {
@@ -54,6 +65,21 @@ public static class EftiNativeGatewayExtensions
                 client.BaseAddress = new Uri(opts.BaseUrl);
                 client.Timeout     = TimeSpan.FromSeconds(opts.TimeoutSeconds);
             })
+            .ConfigurePrimaryHttpMessageHandler(sp =>
+            {
+                // mTLS: aggiunge il certificato client X.509 all'handshake TLS
+                var opts    = sp.GetRequiredService<IOptions<EftiNativeOptions>>().Value;
+                var handler = new HttpClientHandler();
+
+                if (!string.IsNullOrEmpty(opts.CertificatePath))
+                {
+                    var cert = EftiCertLoader.Load(opts.CertificatePath, opts.CertificatePassword);
+                    handler.ClientCertificates.Add(cert);
+                    handler.ClientCertificateOptions = ClientCertificateOption.Manual;
+                }
+
+                return handler;
+            })
             .AddHttpMessageHandler(_ => new GatewayResilienceHandler(ResiliencePolicies.CreateGatewayPipeline()))
             .AddHttpMessageHandler<EftiOAuth2Handler>();
 
@@ -62,3 +88,4 @@ public static class EftiNativeGatewayExtensions
         return services;
     }
 }
+

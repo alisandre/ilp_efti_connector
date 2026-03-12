@@ -4,6 +4,7 @@ using ilp_efti_connector.Gateway.EftiNative.Client;
 using ilp_efti_connector.Gateway.Milos;
 using ilp_efti_connector.Gateway.Milos.Client;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace ilp_efti_connector.EftiGatewayService;
 
@@ -16,15 +17,16 @@ public sealed class GatewaySelector
     private readonly IReadOnlyDictionary<string, IEftiGateway> _gateways;
 
     public GatewaySelector(
-        IMilosEcmrClient         milosClient,
-        ILogger<MilosTfpGateway> milosLogger,
-        IEftiGateClient          eftiClient,
-        ILogger<EftiNativeGateway> eftiLogger)
+        IMilosEcmrClient               milosClient,
+        ILogger<MilosTfpGateway>       milosLogger,
+        IEftiGateClient                eftiClient,
+        IOptions<EftiNativeOptions>    eftiOptions,
+        ILogger<EftiNativeGateway>     eftiLogger)
     {
         _gateways = new Dictionary<string, IEftiGateway>(StringComparer.OrdinalIgnoreCase)
         {
             ["MILOS"]        = new MilosTfpGateway(milosClient, milosLogger),
-            ["EFTI_NATIVE"]  = new EftiNativeGateway(eftiClient, eftiLogger),
+            ["EFTI_NATIVE"]  = new EftiNativeGateway(eftiClient, eftiOptions, eftiLogger),
         };
     }
 

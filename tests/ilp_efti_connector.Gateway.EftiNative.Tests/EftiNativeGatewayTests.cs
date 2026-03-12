@@ -4,6 +4,7 @@ using ilp_efti_connector.Gateway.Contracts.Models;
 using ilp_efti_connector.Gateway.EftiNative.Client;
 using ilp_efti_connector.Gateway.EftiNative.Models.EN17532;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Refit;
 using System.Net;
 
@@ -15,7 +16,10 @@ public sealed class EftiNativeGatewayTests
     private readonly EftiNativeGateway     _sut;
 
     public EftiNativeGatewayTests()
-        => _sut = new EftiNativeGateway(_client.Object, NullLogger<EftiNativeGateway>.Instance);
+        => _sut = new EftiNativeGateway(
+               _client.Object,
+               Options.Create(new EftiNativeOptions { CountryCode = "IT", PlatformId = "TEST" }),
+               NullLogger<EftiNativeGateway>.Instance);
 
     // ─── SendEcmrAsync ────────────────────────────────────────────────────────
 
